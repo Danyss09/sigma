@@ -18,7 +18,8 @@ import { Tarifa } from '../tarifas/entities/tarifa.entity';
 import { MedicamentoInsumo } from '../medicamentos/entities/medicamento-insumo.entity';
 import { DecisionAuditoriaEntity } from '../auditoria/entities/decision-auditoria.entity';
 import { AuditLog } from '../audit-log/entities/audit-log.entity';
-
+import { MinioModule } from '../minio/minio.module';
+import { ExportadorLibreOfficeService } from './services/exportador-libreoffice.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -33,7 +34,9 @@ import { AuditLog } from '../audit-log/entities/audit-log.entity';
       ResultadoPlanilla,
       Plantilla,
     ]),
+    MinioModule, 
   ],
+  
   controllers: [PlanillasController, PlantillasController],
   providers: [
     PlanillasService,
@@ -42,6 +45,7 @@ import { AuditLog } from '../audit-log/entities/audit-log.entity';
     GestionPlantillasService,
     GeneradorIndividualesService,
     GeneradorConsolidadasService,
+    ExportadorLibreOfficeService,
   ],
   exports: [PlanillasService],
 })

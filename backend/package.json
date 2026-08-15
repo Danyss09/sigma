@@ -33,6 +33,7 @@
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",
     "@types/express": "^4.17.25",
+    "@types/minio": "^7.1.0",
     "@types/multer": "^2.2.0",
     "@types/node": "^20.11.0",
     "@types/passport-jwt": "^4.0.1",

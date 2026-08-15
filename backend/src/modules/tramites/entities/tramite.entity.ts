@@ -1,7 +1,7 @@
 import {
   Entity,
   PrimaryGeneratedColumn,
-  Column,
+  Column,Unique,
   ManyToOne,
   JoinColumn,
   OneToMany,
@@ -9,13 +9,14 @@ import {
 } from 'typeorm';
 import { Planilla } from '../../planillas/entities/planilla.entity';
 import { Expediente } from '../../expedientes/entities/expediente.entity';
-
+@Unique(['numeroTramite', 'planilla'])
 @Entity('tramites')
 export class Tramite {
+
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ name: 'numero_tramite', type: 'varchar', length: 50, unique: true })
+  @Column({ name: 'numero_tramite', type: 'varchar', length: 50 })
   numeroTramite: string;
 
   @Column({ name: 'tipo_servicio', type: 'varchar', length: 100 })

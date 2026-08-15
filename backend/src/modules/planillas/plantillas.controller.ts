@@ -15,7 +15,8 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
-
+import { ActualizarPlanillaDto } from './dto/actualizar-planilla.dto';
+import { Planilla } from './entities/planilla.entity';
 import { GestionPlantillasService } from './services/gestion-plantillas.service';
 import { CrearPlantillaDto } from './dto/crear-plantilla.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';

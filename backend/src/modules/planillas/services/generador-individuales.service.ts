@@ -1,40 +1,53 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, In } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import * as ExcelJS from 'exceljs';
 import * as path from 'path';
 
 import { DetalleServicio } from '../../detalles/entities/detalle-servicio.entity';
+import { Planilla } from '../entities/planilla.entity';
 import { ResultadoPlanilla } from '../entities/resultado-planilla.entity';
 import { GenerarIndividualesDto } from '../dto/generar-individuales.dto';
 import { ExportadorExcelService } from './exportador-excel.service';
-import { ExportadorPdfService } from './exportador-pdf.service';
+import { ExportadorLibreOfficeService } from './exportador-libreoffice.service';
 import { GestionPlantillasService } from './gestion-plantillas.service';
 import { TipoResultado, FormatoArchivo, TipoPlantilla } from '../../../common/enums';
 import { limpiarNombreArchivo } from '../utils/limpiar-nombre-archivo';
+import { montoALetras } from '../utils/monto-a-letras';
 
-// ═══════════════════════════════════════════════════════════════════
-// LAYOUT DE LA PLANTILLA INDIVIDUAL — AJUSTA ESTO CONTRA TU .xlsx REAL
-// Inferido del VBA: datos desde fila 13, columnas A:I, cabecera con
-// trámite en B5 y servicio en B6. No tengo el archivo real para
-// verificar los nombres exactos de columna, así que confírmalo.
-// ═══════════════════════════════════════════════════════════════════
 const NOMBRE_HOJA = 'FORMATO PLANILLA INDIVIDUAL';
-const FILA_TRAMITE = 5; // B5
-const FILA_SERVICIO = 6; // B6
-const COLUMNA_ENCABEZADO = 'B';
+
+const CELDA_TRAMITE = 'B5';
+const CELDA_SERVICIO = 'B6';
+const CELDA_MES_ANO = 'G6';
+const CELDA_MONTO_SOLICITADO = 'C7';
+const CELDA_CIE10 = 'E7';
+const CELDA_CODIGO_VALIDACION = 'C8';
+const CELDA_IDENTIFICACION = 'C9';
+const CELDA_BENEFICIARIO = 'C10';
+const CELDA_DESDE = 'C11';
+const CELDA_HASTA = 'E11';
+
 const FILA_INICIO_DATOS = 13;
-const FILA_FIN_DATOS = 53; // igual que el rango que oculta/borra el VBA (13..53)
+const FILA_FIN_DATOS = 53;
 const COLUMNAS = {
-  numero: 'A',
-  fecha: 'B',
-  codigo: 'C',
-  descripcion: 'D',
-  cantidad: 'E',
-  valorUnitario: 'F',
-  subtotal: 'G',
-  modificador: 'H',
+  fecha: 'A',
+  codigo: 'B',
+  descripcion: 'C',
+  cantidad: 'D',
+  valorUnitario: 'E',
+  subtotal: 'F',
+  clasificador: 'G',
+  modificadorPorcentaje: 'H',
   valorTotal: 'I',
 } as const;
+
+const FILA_TOTAL = 54;
+const CELDA_TOTAL_LETRAS = 'C54';
+const CELDA_TOTAL_NUMERO = 'I54';
+
+const REVISOR = { nombre: 'C60', identificacion: 'C61', cargo: 'C62' };
+const APROBADOR = { nombre: 'C65', identificacion: 'C66', cargo: 'C67' };
 
 interface ContextoRequest {
   usuarioId: number;
@@ -59,8 +72,10 @@ export class GeneradorIndividualesService {
     @InjectDataSource() private readonly dataSource: DataSource,
     @InjectRepository(ResultadoPlanilla)
     private readonly resultadosRepository: Repository<ResultadoPlanilla>,
+    @InjectRepository(Planilla)
+    private readonly planillasRepository: Repository<Planilla>,
     private readonly excelService: ExportadorExcelService,
-    private readonly pdfService: ExportadorPdfService,
+    private readonly libreOfficeService: ExportadorLibreOfficeService,
     private readonly plantillasService: GestionPlantillasService,
   ) {}
 
@@ -69,12 +84,8 @@ export class GeneradorIndividualesService {
     dto: GenerarIndividualesDto,
     _ctx: ContextoRequest,
   ): Promise<ResultadoGeneracion> {
+    const planilla = await this.planillasRepository.findOneOrFail({ where: { id: planillaId } });
     const grupos = await this.agruparPorServicioYTramite(planillaId, dto);
-
-    if (grupos.length === 0) {
-      this.logger.warn(`Planilla ${planillaId}: no hay detalles que coincidan con el filtro.`);
-    }
-
     const rutaPlantilla = await this.plantillasService.obtenerRutaActiva(TipoPlantilla.INDIVIDUAL);
 
     const generados: ResultadoPlanilla[] = [];
@@ -82,7 +93,7 @@ export class GeneradorIndividualesService {
 
     for (const grupo of grupos) {
       try {
-        const registros = await this.generarUnGrupo(planillaId, grupo, rutaPlantilla);
+        const registros = await this.generarUnGrupo(planillaId, planilla, grupo, rutaPlantilla);
         generados.push(...registros);
       } catch (error) {
         this.logger.error(
@@ -97,6 +108,23 @@ export class GeneradorIndividualesService {
     }
 
     return { generados, errores };
+  }
+
+  private limpiarZonasBasura(hoja: ExcelJS.Worksheet): void {
+    const TODAS_LAS_COLUMNAS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
+    const COLUMNAS_SIN_B_C = ['A', 'D', 'E', 'F', 'G', 'H', 'I'];
+
+    for (const fila of [53, 55, 56, 57, 58, 59, 63, 64, 68]) {
+      for (const col of TODAS_LAS_COLUMNAS) {
+        hoja.getCell(`${col}${fila}`).value = null;
+      }
+    }
+
+    for (const fila of [60, 61, 62, 65, 66, 67]) {
+      for (const col of COLUMNAS_SIN_B_C) {
+        hoja.getCell(`${col}${fila}`).value = null;
+      }
+    }
   }
 
   private async agruparPorServicioYTramite(
@@ -139,15 +167,19 @@ export class GeneradorIndividualesService {
 
   private async generarUnGrupo(
     planillaId: number,
+    planilla: Planilla,
     grupo: GrupoIndividual,
     rutaPlantilla: string,
   ): Promise<ResultadoPlanilla[]> {
     const capacidad = FILA_FIN_DATOS - FILA_INICIO_DATOS + 1;
     if (grupo.detalles.length > capacidad) {
       throw new Error(
-        `El trámite ${grupo.tramite} tiene ${grupo.detalles.length} líneas, pero la plantilla solo soporta ${capacidad} (filas ${FILA_INICIO_DATOS}-${FILA_FIN_DATOS}). Divide el trámite o amplía la plantilla.`,
+        `El trámite ${grupo.tramite} tiene ${grupo.detalles.length} líneas, pero la plantilla solo soporta ${capacidad}.`,
       );
     }
+
+    const expediente = grupo.detalles[0].expediente;
+    const tramiteEntidad = expediente.tramite;
 
     const servicioLimpio = limpiarNombreArchivo(grupo.servicio);
     const tramiteLimpio = limpiarNombreArchivo(grupo.tramite);
@@ -160,87 +192,91 @@ export class GeneradorIndividualesService {
     );
     const nombreBase = `Planilla_${tramiteLimpio}_${servicioLimpio}`;
 
-    // --- Excel ---
     const workbook = await this.excelService.cargarPlantilla(rutaPlantilla);
     const hoja = workbook.getWorksheet(NOMBRE_HOJA) ?? workbook.worksheets[0];
+    this.limpiarZonasBasura(hoja);
 
-    hoja.getCell(`${COLUMNA_ENCABEZADO}${FILA_TRAMITE}`).value = grupo.tramite;
-    hoja.getCell(`${COLUMNA_ENCABEZADO}${FILA_SERVICIO}`).value = grupo.servicio;
+    hoja.getCell(CELDA_TRAMITE).value = grupo.tramite;
+    hoja.getCell(CELDA_SERVICIO).value = grupo.servicio;
+    hoja.getCell(CELDA_MES_ANO).value = new Date(tramiteEntidad.mesAnoServicio);
+    hoja.getCell(CELDA_CIE10).value = expediente.cie10Codigo;
+    hoja.getCell(CELDA_CODIGO_VALIDACION).value = expediente.codigoValidacion ?? '';
+    hoja.getCell(CELDA_IDENTIFICACION).value = expediente.identificacion;
+    hoja.getCell(CELDA_BENEFICIARIO).value = expediente.nombrePaciente;
+
+    const fechas = grupo.detalles.map((d) => new Date(d.fechaAtencion).getTime());
+    hoja.getCell(CELDA_DESDE).value = new Date(Math.min(...fechas));
+    hoja.getCell(CELDA_HASTA).value = new Date(Math.max(...fechas));
 
     let filaActual = FILA_INICIO_DATOS;
     let totalGeneral = 0;
-    let numero = 1;
 
     for (const detalle of grupo.detalles) {
       const descripcion =
         detalle.tarifa?.descripcion ?? detalle.medicamentoInsumo?.descripcion ?? detalle.descripcion ?? '';
 
+      // numFmt explícito en TODAS las columnas numéricas: la plantilla
+      // trae estas celdas formateadas como FECHA de fábrica, y sin
+      // forzar el formato Excel muestra "3" como "3/1/1900".
       this.excelService.escribirFila(hoja, filaActual, [
-        { columna: COLUMNAS.numero, valor: numero },
-        { columna: COLUMNAS.fecha, valor: detalle.fechaAtencion },
+        // FECHA: NO forzar numFmt aquí — ya funcionaba bien antes con el
+        // formato propio de la plantilla; forzarlo causó la regresión
+        // (mostraba el número serie crudo en vez de la fecha).
+        { columna: COLUMNAS.fecha, valor: new Date(detalle.fechaAtencion) },
         { columna: COLUMNAS.codigo, valor: detalle.codigoOriginal },
         { columna: COLUMNAS.descripcion, valor: descripcion },
-        { columna: COLUMNAS.cantidad, valor: Number(detalle.cantidad) },
-        { columna: COLUMNAS.valorUnitario, valor: Number(detalle.valorUnitarioSolicitado) },
-        { columna: COLUMNAS.subtotal, valor: Number(detalle.subtotal) },
-        { columna: COLUMNAS.modificador, valor: Number(detalle.porcentajeModificador) },
-        { columna: COLUMNAS.valorTotal, valor: Number(detalle.valorSolicitado) },
+        { columna: COLUMNAS.cantidad, valor: Number(detalle.cantidad), numFmt: '0.##' },
+        { columna: COLUMNAS.valorUnitario, valor: Number(detalle.valorUnitarioSolicitado), numFmt: '0.0000' },
+        { columna: COLUMNAS.subtotal, valor: Number(detalle.subtotal), numFmt: '0.00' },
+        { columna: COLUMNAS.clasificador, valor: detalle.clasificador ?? '' },
+        // % MODIFICADOR: en vez de confiar en el formato "%" nativo de
+        // Excel (no se estaba aplicando en esta celda por algo propio de
+        // la plantilla), escribimos el número YA multiplicado por 100 y
+        // un formato de texto literal que solo le pega el símbolo "%" —
+        // más robusto porque no depende del comportamiento de auto-escala
+        // de Excel para el tipo "porcentaje".
+        {
+          columna: COLUMNAS.modificadorPorcentaje,
+          valor: round2(Number(detalle.porcentajeModificador) * 100),
+          numFmt: '0.00"%"',
+        },
+        { columna: COLUMNAS.valorTotal, valor: Number(detalle.valorSolicitado), numFmt: '0.00' },
       ]);
 
       totalGeneral += Number(detalle.valorSolicitado);
       filaActual += 1;
-      numero += 1;
     }
 
-    // Fila de TOTAL inmediatamente después del último dato.
-    // AJUSTA la columna/posición exacta contra tu plantilla real.
-    this.excelService.escribirFila(hoja, filaActual, [
-      { columna: COLUMNAS.descripcion, valor: 'TOTAL' },
-      { columna: COLUMNAS.valorTotal, valor: totalGeneral },
-    ]);
+    if (filaActual > FILA_TOTAL) {
+      throw new Error(
+        `El trámite ${grupo.tramite} tiene demasiadas líneas: llegaron hasta la fila ${filaActual - 1}, pero el TOTAL está fijo en la fila ${FILA_TOTAL}.`,
+      );
+    }
+
+    hoja.getCell(CELDA_MONTO_SOLICITADO).value = totalGeneral;
+    hoja.getCell(CELDA_TOTAL_NUMERO).value = totalGeneral;
+    hoja.getCell(CELDA_TOTAL_LETRAS).value = montoALetras(totalGeneral);
+
+    hoja.getCell(REVISOR.nombre).value = planilla.revisadoNombre ?? '';
+    hoja.getCell(REVISOR.identificacion).value = planilla.revisadoIdentificacion ?? '';
+    hoja.getCell(REVISOR.cargo).value = planilla.revisadoCargo;
+    hoja.getCell(APROBADOR.nombre).value = planilla.aprobadoNombre ?? '';
+    hoja.getCell(APROBADOR.identificacion).value = planilla.aprobadoIdentificacion ?? '';
+    hoja.getCell(APROBADOR.cargo).value = planilla.aprobadoCargo;
 
     const nombreXlsx = `${nombreBase}.xlsx`;
     const rutaXlsxAbsoluta = await this.excelService.guardar(workbook, nombreXlsx, carpetaDestino);
     const rutaXlsxRelativa = path.relative(process.cwd(), rutaXlsxAbsoluta);
 
-    // --- PDF (reporte tabular equivalente, no el layout exacto del Excel) ---
-    const filasPdf = grupo.detalles.map((d, i) => [
-      i + 1,
-      d.fechaAtencion,
-      d.codigoOriginal,
-      d.tarifa?.descripcion ?? d.medicamentoInsumo?.descripcion ?? d.descripcion ?? '',
-      Number(d.cantidad),
-      Number(d.valorUnitarioSolicitado).toFixed(4),
-      Number(d.subtotal).toFixed(2),
-      `${Number(d.porcentajeModificador)}%`,
-      Number(d.valorSolicitado).toFixed(2),
-    ]);
-    filasPdf.push(['', '', '', '', '', '', '', 'TOTAL', totalGeneral.toFixed(2)]);
-
-    const bufferPdf = await this.pdfService.generarPDF(
-      {
-        columnas: [
-          { titulo: '#', ancho: 20 },
-          { titulo: 'Fecha', ancho: 55 },
-          { titulo: 'Código', ancho: 60 },
-          { titulo: 'Descripción', ancho: '*' },
-          { titulo: 'Cant.', ancho: 35 },
-          { titulo: 'V. Unit.', ancho: 50 },
-          { titulo: 'Subtotal', ancho: 50 },
-          { titulo: 'Modif.', ancho: 40 },
-          { titulo: 'Total', ancho: 50 },
-        ],
-        filas: filasPdf,
-      },
-      `Planilla Individual — Trámite ${grupo.tramite}`,
-      [`Servicio: ${grupo.servicio}`],
+    // PDF real: conversión directa del .xlsx ya generado (con formato,
+    // logo, firmas, todo) — en vez del PDF genérico armado a mano.
+    const rutaPdfAbsoluta = await this.libreOfficeService.convertirXlsxAPdf(
+      rutaXlsxAbsoluta,
+      carpetaDestino,
     );
-
-    const nombrePdf = `${nombreBase}.pdf`;
-    const rutaPdfAbsoluta = this.pdfService.guardarBuffer(bufferPdf, nombrePdf, carpetaDestino);
+    const nombrePdf = path.basename(rutaPdfAbsoluta);
     const rutaPdfRelativa = path.relative(process.cwd(), rutaPdfAbsoluta);
 
-    // --- Registrar en BD ---
     const registroXlsx = this.resultadosRepository.create({
       planilla: { id: planillaId } as any,
       tipo: TipoResultado.INDIVIDUAL,
@@ -262,4 +298,8 @@ export class GeneradorIndividualesService {
 
     return this.resultadosRepository.save([registroXlsx, registroPdf]);
   }
+}
+
+function round2(valor: number): number {
+  return Math.round((valor + Number.EPSILON) * 100) / 100;
 }

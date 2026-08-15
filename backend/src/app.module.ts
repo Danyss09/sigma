@@ -6,7 +6,9 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { PlanillasModule } from './modules/planillas/planillas.module';
 import { AuditoriaModule } from './modules/auditoria/auditoria.module';
+import { Plantilla } from './modules/planillas/entities/plantilla.entity';
 
+import { ResultadoPlanilla } from './modules/planillas/entities/resultado-planilla.entity';
 // Se listan TODAS las entidades explícitamente (en vez de confiar solo en
 // autoLoadEntities). Motivo: autoLoadEntities únicamente registra las
 // entidades que aparecen en algún TypeOrmModule.forFeature([...]) de un
@@ -40,6 +42,8 @@ const ALL_ENTITIES = [
   DecisionAuditoriaEntity,
   Factura,
   PrediccionRiesgo,
+  Plantilla,
+  ResultadoPlanilla,
   AuditLog,
 ];
 

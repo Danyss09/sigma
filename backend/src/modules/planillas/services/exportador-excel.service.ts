@@ -4,9 +4,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 export interface CeldaValor {
-  columna: string; // ej. "A", "C"
+  columna: string;
   valor: string | number | Date | null;
+  // Formato explícito de celda (ej. '0.00', '0.00%'). Necesario cuando la
+  // plantilla trae la celda pre-formateada como fecha/otra cosa distinta
+  // al tipo de dato real que estamos escribiendo — si no se fuerza,
+  // Excel muestra el número como si fuera una fecha (día N de 1900).
+  numFmt?: string;
 }
+
 
 @Injectable()
 export class ExportadorExcelService {
@@ -33,8 +39,12 @@ export class ExportadorExcelService {
    * decide qué van en cada columna.
    */
   escribirFila(hoja: ExcelJS.Worksheet, fila: number, valores: CeldaValor[]): void {
-    for (const { columna, valor } of valores) {
-      hoja.getCell(`${columna}${fila}`).value = valor;
+    for (const { columna, valor, numFmt } of valores) {
+      const celda = hoja.getCell(`${columna}${fila}`);
+      celda.value = valor;
+      if (numFmt) {
+        celda.numFmt = numFmt;
+      }
     }
   }
 

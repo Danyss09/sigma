@@ -13,6 +13,9 @@ import { MedicamentoInsumo } from '../medicamentos/entities/medicamento-insumo.e
 import { DecisionAuditoriaEntity } from '../auditoria/entities/decision-auditoria.entity';
 import { AuditLog } from '../audit-log/entities/audit-log.entity';
 import { User } from '../users/entities/user.entity';
+import { MinioService } from '../minio/minio.service';
+import { SubirPlanillaDto } from './dto/subir-planilla.dto';
+import { limpiarNombreArchivo } from './utils/limpiar-nombre-archivo';
 
 import { EstadoFila, TipoItem, PlanillaEstado, DecisionAuditoria, AuditAction } from '../../common/enums';
 import { detectarFilaCabeceraYMapa, MapaColumnas } from './utils/matriz-header-mapper';
@@ -29,7 +32,10 @@ interface ContextoRequest {
 export class PlanillasService {
   private readonly logger = new Logger(PlanillasService.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) { }
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly minioService: MinioService,
+  ) { }
 
   /**
    * Punto de entrada principal: recibe el buffer del .xlsm, la planilla ya
@@ -368,9 +374,11 @@ export class PlanillasService {
       : Number(tarifa!.valorOficial);
 
     const subtotal = round2(cantidad * valorUnitarioSolicitado);
-    const valorModificador = round2(subtotal * (porcentajeModificador / 100));
-    const valorSolicitado = round2(subtotal + valorModificador);
-
+    const valorSolicitado = round2(subtotal * porcentajeModificador);
+    // valorModificador queda como el DELTA informativo (positivo si el
+    // modificador aumenta el monto, negativo si lo reduce; 0 cuando
+    // porcentajeModificador = 1.00, es decir "sin cambios").
+    const valorModificador = round2(valorSolicitado - subtotal);
     const detalle = queryRunner.manager.create(DetalleServicio, {
       expediente,
       tipoItem,
@@ -394,7 +402,67 @@ export class PlanillasService {
     resultado.detallesInsertados++;
     resultado.valorTotalSolicitado = round2(resultado.valorTotalSolicitado + valorSolicitado);
   }
+ /**
+   * US-01/US-02 del Sprint 1: sube el archivo a MinIO con naming auditado
+   * y crea la fila `planillas`. Reemplaza el INSERT manual por SQL que
+   * usabas para las pruebas — a partir de ahora el flujo real es:
+   * subirYRegistrar() -> devuelve planillaId -> procesarMatriz(planillaId).
+   */
+  async subirYRegistrar(
+    file: Express.Multer.File,
+    dto: SubirPlanillaDto,
+    usuarioId: number,
+  ): Promise<Planilla> {
+    if (!file) {
+      throw new BadRequestException('Debes adjuntar el archivo de la matriz (.xlsx o .xlsm)');
+    }
 
+    const extensionValida = /\.(xlsx|xlsm)$/i.test(file.originalname);
+    if (!extensionValida) {
+      throw new BadRequestException('El archivo debe ser .xlsx o .xlsm');
+    }
+
+    const hashSha256 = crypto.createHash('sha256').update(file.buffer).digest('hex');
+
+    // Evita subir el mismo archivo dos veces por error (hash_sha256 es
+    // UNIQUE en la BD, pero mejor dar un mensaje claro antes de tocar MinIO).
+    const yaExiste = await this.dataSource
+      .getRepository(Planilla)
+      .findOne({ where: { hashSha256 } });
+    if (yaExiste) {
+      throw new BadRequestException(
+        `Este archivo ya fue subido antes (planilla id=${yaExiste.id}, estado=${yaExiste.estado}). ` +
+          'Si necesitas reprocesarlo, usa ese id directo en /planillas/procesar.',
+      );
+    }
+
+    const [mes, anio] = dto.periodo.split('-');
+
+    const hospitalLimpio = limpiarNombreArchivo(dto.hospital);
+    const nombreArchivoLimpio = limpiarNombreArchivo(file.originalname);
+    const timestamp = Date.now();
+    const objectName = `planillas/${hospitalLimpio}/${anio}/${mes}/${usuarioId}_${timestamp}_${nombreArchivoLimpio}`;
+
+    await this.minioService.uploadFile(file.buffer, objectName, {
+      'Content-Type': file.mimetype,
+    });
+
+    const planilla = this.dataSource.getRepository(Planilla).create({
+      nombreArchivo: file.originalname,
+      minioPath: objectName,
+      hashSha256,
+      hospital: dto.hospital,
+      periodo: dto.periodo,
+      subidoPor: { id: usuarioId } as any,
+      estado: PlanillaEstado.SUBIDA,
+    });
+
+    const guardada = await this.dataSource.getRepository(Planilla).save(planilla);
+
+    this.logger.log(`Planilla ${guardada.id} subida a MinIO: ${objectName}`);
+
+    return guardada;
+  }
   // -------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------

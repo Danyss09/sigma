@@ -28,7 +28,7 @@ export class Expediente {
 
   // Cédula en texto plano: se necesita para mostrarla en reportes, pero
   // el acceso a este campo debe restringirse por rol a nivel de servicio.
-  @Column({ type: 'varchar', length: 20 })
+  @Column({ type: 'varchar', length: 50 })
   identificacion: string;
 
   // SHA256 de la cédula, calculado en el servicio antes de insertar (ver 8. REQUISITOS NO FUNCIONALES).

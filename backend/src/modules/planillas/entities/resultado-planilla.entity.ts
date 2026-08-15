@@ -6,7 +6,7 @@ import {
   JoinColumn,
   CreateDateColumn,
 } from 'typeorm';
-import { Planilla } from '../../planillas/entities/planilla.entity';
+import { Planilla } from './planilla.entity';
 import { TipoResultado, FormatoArchivo } from '../../../common/enums';
 
 // Un registro por CADA archivo generado (una corrida de "generar
