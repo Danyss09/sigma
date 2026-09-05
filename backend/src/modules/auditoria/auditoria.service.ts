@@ -6,14 +6,13 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, In } from 'typeorm';
+import { DataSource } from 'typeorm';
 
 import { DetalleServicio } from '../detalles/entities/detalle-servicio.entity';
 import { DecisionAuditoriaEntity } from './entities/decision-auditoria.entity';
 import { AuditLog } from '../audit-log/entities/audit-log.entity';
 import { EstadoFila, DecisionAuditoria, AuditAction } from '../../common/enums';
 import { DecidirAuditoriaDto } from './dto/decidir-auditoria.dto';
-import { QueryAuditoriaDto } from './dto/query-auditoria.dto';
 
 interface ContextoRequest {
   usuarioId: number;
@@ -21,57 +20,85 @@ interface ContextoRequest {
   userAgent?: string;
 }
 
-// Estados de detalles_servicios sobre los que un auditor puede actuar.
-// AUDITADO y FACTURADO ya pasaron por este flujo y no deben reabrirse aquí.
 const ESTADOS_AUDITABLES: EstadoFila[] = [EstadoFila.PENDIENTE, EstadoFila.RECHAZADO];
+const TOLERANCIA_VALOR = 0.01;
 
 @Injectable()
 export class AuditoriaService {
   private readonly logger = new Logger(AuditoriaService.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) { }
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   /**
-   * Lista las líneas que un auditor debe revisar: PENDIENTE (recién
-   * procesadas por PlanillasService) o RECHAZADO (código no encontrado
-   * en ningún catálogo, rechazo automático).
+   * Lista las líneas que un auditor debe revisar. Enriquecida con:
+   * nivel de riesgo, puntaje, SHAP y validación de catálogo -- todo
+   * con valores por defecto seguros (nunca undefined) para que el
+   * frontend jamás explote por un campo faltante.
    */
-  async listarPendientes(query: QueryAuditoriaDto) {
-    const estados = query.estado ? [query.estado] : ESTADOS_AUDITABLES;
+  async listarPendientes(filtros: { estado?: string; tramiteId?: number; planillaId?: number; page?: number; limit?: number }) {
+    const page = filtros.page ?? 1;
+    const limit = filtros.limit ?? 20;
 
     const qb = this.dataSource
       .getRepository(DetalleServicio)
       .createQueryBuilder('detalle')
       .leftJoinAndSelect('detalle.expediente', 'expediente')
       .leftJoinAndSelect('expediente.tramite', 'tramite')
-      .leftJoinAndSelect('detalle.tarifa', 'tarifa')
-      .leftJoinAndSelect('detalle.medicamentoInsumo', 'medicamentoInsumo')
-      .where('detalle.estadoFila IN (:...estados)', { estados });
+      .leftJoinAndSelect('tramite.planilla', 'planilla')
+      .where('detalle.estadoFila IN (:...estados)', {
+        estados: filtros.estado ? [filtros.estado] : ['PENDIENTE', 'RECHAZADO'],
+      });
 
-    if (query.tramiteId) {
-      qb.andWhere('tramite.id = :tramiteId', { tramiteId: query.tramiteId });
+    if (filtros.tramiteId) {
+      qb.andWhere('tramite.id = :tramiteId', { tramiteId: filtros.tramiteId });
+    }
+    if (filtros.planillaId) {
+      qb.andWhere('planilla.id = :planillaId', { planillaId: filtros.planillaId });
     }
 
-    qb.orderBy('detalle.createdAt', 'ASC')
-      .skip((query.page - 1) * query.limit)
-      .take(query.limit);
+    qb.orderBy('detalle.id', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
 
     const [items, total] = await qb.getManyAndCount();
 
+    const itemsEnriquecidos = await Promise.all(
+      items.map(async (item) => {
+        const prediccion = await this.dataSource.getRepository('predicciones_riesgo').findOne({
+          where: { detalleServicio: { id: item.id } },
+          order: { fechaPrediccion: 'DESC' },
+        } as any);
+
+        const valorOficial = item.valorUnitarioOficial !== null ? Number(item.valorUnitarioOficial) : null;
+        const valorSolicitado = Number(item.valorUnitarioSolicitado);
+        let validacionCatalogo: 'CORRECTA' | 'DIFERENCIA' | 'SIN_CATALOGO' = 'SIN_CATALOGO';
+        if (valorOficial !== null) {
+          validacionCatalogo = Math.abs(valorSolicitado - valorOficial) <= TOLERANCIA_VALOR ? 'CORRECTA' : 'DIFERENCIA';
+        }
+
+        return {
+          ...item,
+          servicio: item.expediente?.tramite?.tipoServicio ?? null,
+          nivelRiesgo: (prediccion as any)?.nivelRiesgo ?? null,
+          puntajeRiesgo: (prediccion as any)?.puntaje ? Number((prediccion as any).puntaje) : null,
+          shapValues: (prediccion as any)?.explicacionShap ?? null,
+          validacionCatalogo,
+          // SIEMPRE array, nunca undefined -- el frontend puede confiar
+          // en esto ciegamente sin checks adicionales.
+          motivosSugeridos: [] as any[],
+        };
+      }),
+    );
+
     return {
-      items,
+      items: itemsEnriquecidos,
       total,
-      page: query.page,
-      limit: query.limit,
-      totalPages: Math.ceil(total / query.limit),
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
     };
   }
 
-  /**
-   * Registra la decisión de un auditor sobre una línea de detalle_servicio
-   * y actualiza su estado. Todo dentro de una transacción: si falla
-   * cualquier paso, no queda ni la decisión ni el cambio de estado a medias.
-   */
   async decidir(
     detalleId: number,
     dto: DecidirAuditoriaDto,
@@ -107,6 +134,7 @@ export class AuditoriaService {
         auditor: { id: ctx.usuarioId } as any,
         decision: dto.decision,
         motivoGlosa: dto.motivoGlosa ?? null,
+        motivoObjecion: dto.motivoObjecionId ? ({ id: dto.motivoObjecionId } as any) : null,
       });
       await queryRunner.manager.save(DecisionAuditoriaEntity, decisionEntity);
 
@@ -116,15 +144,14 @@ export class AuditoriaService {
         file: null,
         ipAddress: ctx.ipAddress ?? null,
         userAgent: ctx.userAgent ?? null,
-        resultado: `Detalle ${detalleId}: decision=${dto.decision}${dto.motivoGlosa ? `, motivo="${dto.motivoGlosa}"` : ''
-          }`,
+        resultado: `Detalle ${detalleId}: decision=${dto.decision}${
+          dto.motivoGlosa ? `, motivo="${dto.motivoGlosa}"` : ''
+        }`,
       });
 
       await queryRunner.commitTransaction();
 
-      this.logger.log(
-        `Detalle ${detalleId} auditado por usuario ${ctx.usuarioId}: ${dto.decision}`,
-      );
+      this.logger.log(`Detalle ${detalleId} auditado por usuario ${ctx.usuarioId}: ${dto.decision}`);
 
       return { detalle, decision: decisionEntity };
     } catch (error) {
@@ -135,20 +162,14 @@ export class AuditoriaService {
     }
   }
 
-  /**
-   * Aplica las reglas de negocio de la TAREA 6.5 sobre el detalle en memoria
-   * (antes de guardarlo). No toca la base de datos.
-   */
   private aplicarDecision(
     detalle: DetalleServicio,
     dto: DecidirAuditoriaDto,
     requiereValorOficialManual: boolean,
   ): void {
-
-
     switch (dto.decision) {
       case DecisionAuditoria.APROBADO: {
- if (requiereValorOficialManual) {
+        if (requiereValorOficialManual) {
           if (dto.valorUnitarioOficial === undefined || dto.valorSolicitado === undefined) {
             throw new BadRequestException(
               'Esta línea no tiene valor oficial registrado (código TPSNS no encontrado, o insumo/medicamento sin catálogo AS-400 disponible). ' +
@@ -156,7 +177,6 @@ export class AuditoriaService {
             );
           }
         }
-
         if (dto.valorUnitarioOficial !== undefined) {
           detalle.valorUnitarioOficial = dto.valorUnitarioOficial;
         }
@@ -169,14 +189,10 @@ export class AuditoriaService {
 
       case DecisionAuditoria.PARCIAL: {
         if (!dto.motivoGlosa) {
-          throw new BadRequestException(
-            'Una aprobación PARCIAL requiere motivoGlosa explicando el ajuste.',
-          );
+          throw new BadRequestException('Una aprobación PARCIAL requiere motivoGlosa explicando el ajuste.');
         }
         if (dto.valorSolicitado === undefined) {
-          throw new BadRequestException(
-            'Una aprobación PARCIAL requiere el nuevo valorSolicitado ajustado.',
-          );
+          throw new BadRequestException('Una aprobación PARCIAL requiere el nuevo valorSolicitado ajustado.');
         }
         if (dto.valorUnitarioOficial !== undefined) {
           detalle.valorUnitarioOficial = dto.valorUnitarioOficial;
@@ -188,13 +204,36 @@ export class AuditoriaService {
 
       case DecisionAuditoria.RECHAZADO: {
         if (!dto.motivoGlosa) {
-          throw new BadRequestException(
-            'Un rechazo definitivo requiere motivoGlosa.',
-          );
+          throw new BadRequestException('Un rechazo definitivo requiere motivoGlosa.');
         }
         detalle.estadoFila = EstadoFila.RECHAZADO;
         break;
       }
     }
+  }
+
+  async obtenerContextoCompleto(detalleId: number) {
+    const detalle = await this.dataSource.getRepository(DetalleServicio).findOne({
+      where: { id: detalleId },
+      relations: ['expediente', 'expediente.tramite', 'expediente.tramite.planilla', 'tarifa', 'medicamentoInsumo'],
+    });
+    if (!detalle) {
+      throw new NotFoundException(`Detalle ${detalleId} no encontrado`);
+    }
+
+    const prediccion = await this.dataSource.getRepository('predicciones_riesgo').findOne({
+      where: { detalleServicio: { id: detalleId } },
+      order: { fechaPrediccion: 'DESC' },
+    } as any);
+
+    return { detalle, prediccion };
+  }
+
+  async listarMotivosObjecion() {
+    return this.dataSource.query(
+      `SELECT id, grupo, codigo_original, codigo_canonico, descripcion, estado_validacion
+       FROM motivos_objecion
+       ORDER BY grupo, codigo_original`,
+    );
   }
 }

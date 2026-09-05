@@ -1,23 +1,91 @@
-"""
-SIGMA - Servicio de Machine Learning (FastAPI)
-Punto de entrada del microservicio.
-"""
 from datetime import datetime, timezone
+import json
 
-from fastapi import FastAPI
+import joblib
+import numpy as np
+import pandas as pd
+import shap
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 app = FastAPI(title="SIGMA ML Service")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+try:
+    modelo = joblib.load("modelo_riesgo.pkl")
+    with open("columnas_modelo.json") as f:
+        COLUMNAS_FEATURES: list[str] = json.load(f)
+    explainer = shap.TreeExplainer(modelo)
+    MODELO_CARGADO = True
+except FileNotFoundError:
+    modelo = None
+    COLUMNAS_FEATURES = []
+    explainer = None
+    MODELO_CARGADO = False
+
+
+class DetalleParaPredecir(BaseModel):
+    ratio_valor: float
+    cantidad: float
+    veces_repetido_beneficiario: int
+
+
+class PrediccionRiesgo(BaseModel):
+    score: float
+    label: str
+    shap_values: dict[str, float]
+
+
+def _score_a_nivel(score: float) -> str:
+    if score < 0.25:
+        return "BAJO"
+    if score < 0.5:
+        return "MEDIO"
+    if score < 0.75:
+        return "ALTO"
+    return "CRITICO"
 
 
 @app.get("/health")
 def health() -> dict:
-    """
-    Health check temporal del PASO 1.
-    model_loaded siempre False hasta que se integre el modelo real
-    (fuera del alcance del Módulo 1).
-    """
     return {
         "status": "ok",
-        "model_loaded": False,
+        "model_loaded": MODELO_CARGADO,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.post("/predecir-riesgo", response_model=PrediccionRiesgo)
+def predecir_riesgo(detalle: DetalleParaPredecir) -> PrediccionRiesgo:
+    if not MODELO_CARGADO:
+        raise HTTPException(status_code=503, detail="Modelo no cargado. Corre entrenar_modelo.py primero.")
+
+    # FIX: el modelo se entrenó con un DataFrame (columnas con nombre).
+    # Antes se construía un np.array plano aquí, lo que generaba el
+    # warning "X does not have valid feature names" — no afectaba el
+    # resultado numérico (el orden ya coincidía), pero esta es la forma
+    # correcta y elimina el warning de raíz, no solo lo oculta.
+    X = pd.DataFrame(
+        [[getattr(detalle, col) for col in COLUMNAS_FEATURES]],
+        columns=COLUMNAS_FEATURES,
+    )
+
+    score = float(modelo.predict_proba(X)[0][1])
+
+    raw_shap = explainer.shap_values(X)
+    if isinstance(raw_shap, list):
+        valores = raw_shap[1][0]
+    else:
+        raw_shap = np.array(raw_shap)
+        valores = raw_shap[0, :, 1] if raw_shap.ndim == 3 else raw_shap[0]
+
+    shap_dict = {col: float(v) for col, v in zip(COLUMNAS_FEATURES, valores)}
+
+    return PrediccionRiesgo(score=round(score, 4), label=_score_a_nivel(score), shap_values=shap_dict)

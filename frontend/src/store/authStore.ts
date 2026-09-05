@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
 interface Usuario {
   id: number;
@@ -16,18 +17,24 @@ interface AuthState {
   limpiarSesion: () => void;
 }
 
-// NOTA: el diseño original del Módulo 1 planteaba refresh_token en
-// cookie httpOnly — pero el backend real que construimos devuelve
-// refresh_token en el body del JSON de /auth/login (no lo pone en una
-// cookie), así que el cliente SÍ necesita guardarlo para poder mandarlo
-// de vuelta en /auth/refresh. Queda en memoria (no localStorage) para
-// no exponerlo a XSS más de lo necesario, aceptable para nivel tesis.
-export const useAuthStore = create<AuthState>((set) => ({
-  accessToken: null,
-  refreshToken: null,
-  usuario: null,
-  setSesion: ({ accessToken, refreshToken, usuario }) =>
-    set({ accessToken, refreshToken, usuario }),
-  setAccessToken: (accessToken) => set({ accessToken }),
-  limpiarSesion: () => set({ accessToken: null, refreshToken: null, usuario: null }),
-}));
+// Persistido en sessionStorage (no localStorage): sobrevive a un F5 o a
+// recargar la página, pero se borra automáticamente al cerrar la pestaña
+// del navegador — buen balance entre comodidad al probar y no dejar la
+// sesión viva indefinidamente en el disco.
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
+      accessToken: null,
+      refreshToken: null,
+      usuario: null,
+      setSesion: ({ accessToken, refreshToken, usuario }) =>
+        set({ accessToken, refreshToken, usuario }),
+      setAccessToken: (accessToken) => set({ accessToken }),
+      limpiarSesion: () => set({ accessToken: null, refreshToken: null, usuario: null }),
+    }),
+    {
+      name: 'sigma-auth',
+      storage: createJSONStorage(() => sessionStorage),
+    },
+  ),
+);

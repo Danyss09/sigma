@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
@@ -85,6 +85,12 @@ export class GeneradorIndividualesService {
     _ctx: ContextoRequest,
   ): Promise<ResultadoGeneracion> {
     const planilla = await this.planillasRepository.findOneOrFail({ where: { id: planillaId } });
+        if (!planilla.revisadoNombre || !planilla.aprobadoNombre) {
+      throw new BadRequestException(
+        'Esta planilla no tiene las firmas completas (revisor y/o aprobador). ' +
+        'Complétalas en "Editar" antes de generar los documentos finales.',
+      );
+    }
     const grupos = await this.agruparPorServicioYTramite(planillaId, dto);
     const rutaPlantilla = await this.plantillasService.obtenerRutaActiva(TipoPlantilla.INDIVIDUAL);
 
@@ -218,7 +224,8 @@ export class GeneradorIndividualesService {
       // numFmt explícito en TODAS las columnas numéricas: la plantilla
       // trae estas celdas formateadas como FECHA de fábrica, y sin
       // forzar el formato Excel muestra "3" como "3/1/1900".
-      this.excelService.escribirFila(hoja, filaActual, [
+        this.excelService.escribirFila(hoja, filaActual, [
+        { columna: COLUMNAS.fecha, valor: new Date(detalle.fechaAtencion), numFmt: 'mm-dd-yy' },
         // FECHA: NO forzar numFmt aquí — ya funcionaba bien antes con el
         // formato propio de la plantilla; forzarlo causó la regresión
         // (mostraba el número serie crudo en vez de la fecha).

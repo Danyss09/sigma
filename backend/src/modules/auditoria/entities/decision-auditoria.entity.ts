@@ -9,6 +9,7 @@ import {
 import { DetalleServicio } from '../../detalles/entities/detalle-servicio.entity';
 import { User } from '../../users/entities/user.entity';
 import { DecisionAuditoria } from '../../../common/enums';
+import { MotivoObjecion } from '../../motivos-objecion/entities/motivo-objecion.entity';
 
 // Nombre de clase con sufijo "Entity" para no colisionar con el enum DecisionAuditoria.
 @Entity('decisiones_auditoria')
@@ -40,4 +41,8 @@ export class DecisionAuditoriaEntity {
 
   @CreateDateColumn({ name: 'fecha_decision', type: 'timestamp' })
   fechaDecision: Date;
+  @ManyToOne(() => MotivoObjecion, { nullable: true })
+  @JoinColumn({ name: 'motivo_objecion_id' })
+  motivoObjecion: MotivoObjecion | null;
+
 }

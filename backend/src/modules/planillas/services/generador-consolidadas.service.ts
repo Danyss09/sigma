@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException,Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
@@ -80,6 +80,12 @@ export class GeneradorConsolidadasService {
     _ctx: ContextoRequest,
   ): Promise<ResultadoGeneracion> {
     const planilla = await this.planillasRepository.findOneOrFail({ where: { id: planillaId } });
+        if (!planilla.revisadoNombre || !planilla.aprobadoNombre) {
+      throw new BadRequestException(
+        'Esta planilla no tiene las firmas completas (revisor y/o aprobador). ' +
+        'Complétalas en "Editar" antes de generar los documentos finales.',
+      );
+    }
     const grupos = await this.agruparPorServicioYBeneficiario(planillaId, dto);
     const rutaPlantilla = await this.plantillasService.obtenerRutaActiva(TipoPlantilla.CONSOLIDADA);
 

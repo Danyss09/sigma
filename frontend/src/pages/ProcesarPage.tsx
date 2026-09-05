@@ -1,5 +1,6 @@
 import { useState, FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import BotonRegresar from '../components/BotonRegresar';
 import { procesarPlanilla, ResultadoProcesamiento } from '../api/reportesApi';
 
 function ProcesarPage(): JSX.Element {
@@ -40,102 +41,95 @@ function ProcesarPage(): JSX.Element {
   }
 
   return (
-    <div className="max-w-2xl">
-      <h1 className="text-xl font-bold text-hospital-900 mb-1">Procesar matriz</h1>
-      <p className="text-sm text-gray-500 mb-6">
-        Usa el <code>planilla_id</code> que te dio "Subir planilla".
-      </p>
+    <div style={{ maxWidth: 640 }}>
+      <BotonRegresar to="/planillas" />
 
-      <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 space-y-4">
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 24, fontWeight: 600 }}>Procesar matriz</div>
+        <div style={{ marginTop: 4, fontSize: 14, color: 'var(--text-muted)' }}>
+          Lee el archivo real de la planilla, valida contra catálogo y crea trámites/expedientes/detalles.
+          Usa el <span style={{ fontFamily: 'var(--mono)' }}>planilla_id</span> que te dio "Nueva carga".
+        </div>
+      </div>
+
+      <form onSubmit={handleSubmit} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div>
-          <label className="block text-sm font-medium text-gray-700">Planilla ID</label>
+          <label style={{ fontSize: 12.5, fontWeight: 500, display: 'block', marginBottom: 6 }}>Planilla ID</label>
           <input
             type="number"
             required
             value={planillaId}
             onChange={(e) => setPlanillaId(e.target.value)}
-            className="mt-1 w-full border rounded px-3 py-2"
+            style={{ width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13.5, fontFamily: 'var(--font)' }}
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700">
+          <label style={{ fontSize: 12.5, fontWeight: 500, display: 'block', marginBottom: 6 }}>
             Archivo de la matriz (.xlsx / .xlsm)
           </label>
-          <input
-            type="file"
-            required
-            accept=".xlsx,.xlsm"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="mt-1 w-full"
-          />
+          {!file ? (
+            <label
+              className="dropzone"
+              style={{ border: '2px dashed var(--border-strong)', borderRadius: 8, padding: '24px 14px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'var(--surface-alt)', cursor: 'pointer' }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 500 }}>Haz clic para buscar tu archivo</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>.xlsx o .xlsm</div>
+              <input type="file" required accept=".xlsx,.xlsm" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            </label>
+          ) : (
+            <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface-alt)' }}>
+              <span style={{ fontSize: 12.5 }}>{file.name}</span>
+              <button type="button" className="icon-btn" onClick={() => setFile(null)}>✕</button>
+            </div>
+          )}
         </div>
 
-        <fieldset className="border rounded p-3">
-          <legend className="text-sm font-medium text-gray-700 px-1">
+        <fieldset style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
+          <legend style={{ fontSize: 12.5, fontWeight: 500, padding: '0 4px', color: 'var(--text-muted)' }}>
             Firmas (opcional en este paso)
           </legend>
-          <div className="grid grid-cols-2 gap-3">
-            <input
-              placeholder="Nombre revisor"
-              value={revisadoNombre}
-              onChange={(e) => setRevisadoNombre(e.target.value)}
-              className="border rounded px-3 py-2 text-sm"
-            />
-            <input
-              placeholder="Identificación revisor"
-              value={revisadoIdentificacion}
-              onChange={(e) => setRevisadoIdentificacion(e.target.value)}
-              className="border rounded px-3 py-2 text-sm"
-            />
-            <input
-              placeholder="Nombre aprobador"
-              value={aprobadoNombre}
-              onChange={(e) => setAprobadoNombre(e.target.value)}
-              className="border rounded px-3 py-2 text-sm"
-            />
-            <input
-              placeholder="Identificación aprobador"
-              value={aprobadoIdentificacion}
-              onChange={(e) => setAprobadoIdentificacion(e.target.value)}
-              className="border rounded px-3 py-2 text-sm"
-            />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <input placeholder="Nombre revisor" value={revisadoNombre} onChange={(e) => setRevisadoNombre(e.target.value)} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', fontSize: 13 }} />
+            <input placeholder="Identificación revisor" value={revisadoIdentificacion} onChange={(e) => setRevisadoIdentificacion(e.target.value)} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', fontSize: 13 }} />
+            <input placeholder="Nombre aprobador" value={aprobadoNombre} onChange={(e) => setAprobadoNombre(e.target.value)} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', fontSize: 13 }} />
+            <input placeholder="Identificación aprobador" value={aprobadoIdentificacion} onChange={(e) => setAprobadoIdentificacion(e.target.value)} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', fontSize: 13 }} />
           </div>
         </fieldset>
 
-        {error && <p className="text-red-600 text-sm">{error}</p>}
+        {error && <p style={{ color: 'var(--risk-critico)', fontSize: 13 }}>{error}</p>}
 
-        <button
-          type="submit"
-          disabled={cargando}
-          className="bg-hospital-600 text-white px-4 py-2 rounded hover:bg-hospital-700 disabled:opacity-50"
-        >
+        <button type="submit" disabled={cargando} className="btn-primary" style={{ padding: '10px 16px', borderRadius: 8, fontSize: 13.5, fontWeight: 600 }}>
           {cargando ? 'Procesando...' : 'Procesar'}
         </button>
       </form>
 
       {resultado && (
-        <div className="mt-6 bg-white rounded-lg shadow p-6">
-          <h2 className="font-semibold text-hospital-900 mb-3">Resultado</h2>
-          <dl className="grid grid-cols-2 gap-2 text-sm">
-            <dt className="text-gray-500">Trámites creados</dt>
-            <dd>{resultado.tramitesCreados}</dd>
-            <dt className="text-gray-500">Trámites actualizados</dt>
-            <dd>{resultado.tramitesActualizados}</dd>
-            <dt className="text-gray-500">Expedientes creados</dt>
-            <dd>{resultado.expedientesCreados}</dd>
-            <dt className="text-gray-500">Detalles insertados</dt>
-            <dd>{resultado.detallesInsertados}</dd>
-            <dt className="text-gray-500">Rechazados</dt>
-            <dd className="text-red-600">{resultado.detallesRechazados}</dd>
-            <dt className="text-gray-500">Sin catálogo (pendiente auditor)</dt>
-            <dd className="text-amber-600">{resultado.detallesSinCatalogo}</dd>
-            <dt className="text-gray-500 font-medium">Valor total solicitado</dt>
-            <dd className="font-medium">${resultado.valorTotalSolicitado.toFixed(2)}</dd>
-          </dl>
+        <div style={{ marginTop: 20, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24 }}>
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Resultado</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 13.5 }}>
+            <FilaResultado label="Trámites creados" valor={resultado.tramitesCreados} />
+            <FilaResultado label="Trámites actualizados" valor={resultado.tramitesActualizados} />
+            <FilaResultado label="Expedientes creados" valor={resultado.expedientesCreados} />
+            <FilaResultado label="Detalles insertados" valor={resultado.detallesInsertados} />
+            <FilaResultado label="Rechazados" valor={resultado.detallesRechazados} colorVar="--risk-critico" />
+            <FilaResultado label="Sin catálogo" valor={resultado.detallesSinCatalogo} colorVar="--risk-medio" />
+          </div>
+          <div style={{ marginTop: 14, fontSize: 14, fontWeight: 600 }}>
+            Valor total solicitado: <span style={{ fontFamily: 'var(--mono)' }}>${resultado.valorTotalSolicitado.toFixed(2)}</span>
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+function FilaResultado({ label, valor, colorVar }: { label: string; valor: number; colorVar?: string }): JSX.Element {
+  return (
+    <>
+      <div style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div style={{ fontWeight: 600, color: colorVar ? `var(${colorVar})` : 'var(--text)' }}>{valor}</div>
+    </>
   );
 }
 

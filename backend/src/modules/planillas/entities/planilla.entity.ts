@@ -55,7 +55,7 @@ export class Planilla {
   @Column({ name: 'revisado_nombre', type: 'varchar', length: 200, nullable: true })
   revisadoNombre: string | null;
 
-  @Column({ name: 'revisado_identificacion', type: 'varchar', length: 20, nullable: true })
+  @Column({ name: 'revisado_identificacion', type: 'varchar', length: 50, nullable: true })
   revisadoIdentificacion: string | null;
 
   @Column({
@@ -73,7 +73,7 @@ export class Planilla {
   @Column({ name: 'aprobado_nombre', type: 'varchar', length: 200, nullable: true })
   aprobadoNombre: string | null;
 
-  @Column({ name: 'aprobado_identificacion', type: 'varchar', length: 20, nullable: true })
+  @Column({ name: 'aprobado_identificacion', type: 'varchar', length: 50, nullable: true })
   aprobadoIdentificacion: string | null;
 
   @Column({

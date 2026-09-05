@@ -25,6 +25,16 @@ export class QueryAuditoriaDto {
   tramiteId?: number;
 
   @ApiPropertyOptional({
+    description: 'ID de la planilla (filtra solo las líneas pendientes de ESA planilla)',
+    example: 11,
+    type: Number,
+  })
+  @IsOptional()
+  @Transform(({ value }) => parseInt(value, 10))
+  @IsInt()
+  planillaId?: number;
+
+  @ApiPropertyOptional({
     description: 'Número de página (mínimo 1)',
     example: 1,
     default: 1,

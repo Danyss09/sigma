@@ -6,6 +6,7 @@ import {
   IsNumber,
   ValidateIf,
   Min,
+  IsInt,
 } from 'class-validator';
 import { DecisionAuditoria } from '../../../common/enums';
 
@@ -62,4 +63,8 @@ export class DecidirAuditoriaDto {
   @IsNumber({}, { message: 'valorSolicitado debe ser numérico' })
   @Min(0)
   valorSolicitado?: number;
+  @IsOptional()
+  @IsInt()
+  motivoObjecionId?: number;
+
 }

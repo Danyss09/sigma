@@ -10,6 +10,7 @@ import { GeneradorIndividualesService } from './services/generador-individuales.
 import { GeneradorConsolidadasService } from './services/generador-consolidadas.service';
 import { Planilla } from './entities/planilla.entity';
 import { ResultadoPlanilla } from './entities/resultado-planilla.entity';
+import { MatchingModule } from '../matching/matching.module';
 import { Plantilla } from './entities/plantilla.entity';
 import { Tramite } from '../tramites/entities/tramite.entity';
 import { Expediente } from '../expedientes/entities/expediente.entity';
@@ -20,6 +21,8 @@ import { DecisionAuditoriaEntity } from '../auditoria/entities/decision-auditori
 import { AuditLog } from '../audit-log/entities/audit-log.entity';
 import { MinioModule } from '../minio/minio.module';
 import { ExportadorLibreOfficeService } from './services/exportador-libreoffice.service';
+import { ResponsablesService } from '../responsables/responsables.service';
+import { ResponsablesModule } from '../responsables/responsables.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -33,8 +36,12 @@ import { ExportadorLibreOfficeService } from './services/exportador-libreoffice.
       AuditLog,
       ResultadoPlanilla,
       Plantilla,
+      
     ]),
-    MinioModule, 
+  MatchingModule,
+      MinioModule, 
+      ResponsablesModule,
+    
   ],
   
   controllers: [PlanillasController, PlantillasController],

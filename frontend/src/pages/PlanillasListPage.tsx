@@ -1,35 +1,32 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  listarPlanillas,
-  actualizarPlanilla,
-  eliminarPlanilla,
-  PlanillaListado,
-} from '../api/planillasCrudApi';
+import { listarPlanillas, actualizarPlanilla, eliminarPlanilla, PlanillaListado } from '../api/planillasCrudApi';
+import { useAuthStore } from '../store/authStore';
+import { estadoMeta } from '../styles/riesgoMeta';
 
-const COLOR_ESTADO: Record<string, string> = {
-  SUBIDA: 'bg-gray-100 text-gray-700',
-  PROCESANDO: 'bg-amber-100 text-amber-700',
-  COMPLETADA: 'bg-green-100 text-green-700',
-  ERROR: 'bg-red-100 text-red-700',
-};
+const CHIPS = [
+  { key: 'todas', label: 'Todas' },
+  { key: 'SUBIDA', label: 'Subida' },
+  { key: 'PROCESANDO', label: 'Procesando' },
+  { key: 'COMPLETADA', label: 'Completada' },
+  { key: 'ERROR', label: 'Error' },
+];
 
 function PlanillasListPage(): JSX.Element {
   const [planillas, setPlanillas] = useState<PlanillaListado[]>([]);
+  const [filtro, setFiltro] = useState('todas');
+  const [busqueda, setBusqueda] = useState('');
   const [cargando, setCargando] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [filtroPeriodo, setFiltroPeriodo] = useState('');
   const [editando, setEditando] = useState<PlanillaListado | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const usuario = useAuthStore((state) => state.usuario);
 
   async function cargar(): Promise<void> {
     setCargando(true);
-    setError(null);
     try {
-      const data = await listarPlanillas(filtroPeriodo ? { periodo: filtroPeriodo } : undefined);
+      const data = await listarPlanillas();
       setPlanillas(data);
-    } catch {
-      setError('No se pudo cargar la lista de planillas');
     } finally {
       setCargando(false);
     }
@@ -37,113 +34,162 @@ function PlanillasListPage(): JSX.Element {
 
   useEffect(() => {
     cargar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroPeriodo]);
+  }, []);
+
+  const filtradas = planillas.filter((p) => {
+    const pasaEstado = filtro === 'todas' || p.estado === filtro;
+    const pasaBusqueda =
+      !busqueda ||
+      p.hospital.toLowerCase().includes(busqueda.toLowerCase()) ||
+      String(p.id).includes(busqueda);
+    return pasaEstado && pasaBusqueda;
+  });
 
   async function handleEliminar(p: PlanillaListado): Promise<void> {
     const confirmado = window.confirm(
       `¿Eliminar la planilla #${p.id} (${p.nombreArchivo})?\n\n` +
-        `Si ya tiene trámites/detalles procesados, esos NO se borran — quedan huérfanos ` +
-        `(sin planilla asociada). Solo se borra el registro de la planilla en sí.`,
+        `Si ya tiene trámites/detalles procesados, esos NO se borran automáticamente — quedan huérfanos. Úsalo solo para datos de prueba.`,
     );
     if (!confirmado) return;
-
+    setError(null);
     try {
       await eliminarPlanilla(p.id);
       await cargar();
-    } catch {
-      setError(`No se pudo eliminar la planilla #${p.id}`);
+    } catch (err: any) {
+      setError(err?.response?.data?.message ?? `No se pudo eliminar la planilla #${p.id}`);
     }
   }
 
+  const iniciales = usuario?.nombre
+    ?.split(' ')
+    .map((p) => p[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-xl font-bold text-hospital-900">
-          Planillas subidas ({planillas.length})
-        </h1>
-        <input
-          placeholder="Filtrar por período (MM-YYYY)"
-          value={filtroPeriodo}
-          onChange={(e) => setFiltroPeriodo(e.target.value)}
-          className="border rounded px-3 py-1.5 text-sm"
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 28 }}>
+        <div>
+          <div style={{ fontSize: 24, fontWeight: 600 }}>Planillas</div>
+          <div style={{ marginTop: 4, fontSize: 14, color: 'var(--text-muted)' }}>
+            Gestión y auditoría de planillas médicas cargadas al sistema.
+          </div>
+        </div>
+        <button
+          className="btn-secondary"
+          onClick={() => navigate('/subir')}
+          style={{ padding: '10px 16px', borderRadius: 8, fontSize: 13.5, fontWeight: 600 }}
+        >
+          + Nueva carga
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 16, marginBottom: 28 }}>
+        <TarjetaStat label="Total planillas" valor={planillas.length} />
+        <TarjetaStat label="Subidas (sin procesar)" valor={planillas.filter((p) => p.estado === 'SUBIDA').length} />
+        <TarjetaStat label="Completadas" valor={planillas.filter((p) => p.estado === 'COMPLETADA').length} colorVar="--risk-bajo" />
+        <TarjetaStat
+          label="Con firmas pendientes"
+          valor={planillas.filter((p) => !p.revisadoNombre || !p.aprobadoNombre).length}
+          colorVar="--risk-medio"
         />
       </div>
 
-      {cargando && <p className="text-gray-500">Cargando...</p>}
-      {error && <p className="text-red-600 mb-2">{error}</p>}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {CHIPS.map((c) => (
+            <button
+              key={c.key}
+              className="chip"
+              onClick={() => setFiltro(c.key)}
+              style={{
+                padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 500,
+                background: filtro === c.key ? 'var(--brand)' : 'var(--surface)',
+                color: filtro === c.key ? '#fff' : 'var(--text-muted)',
+                border: `1px solid ${filtro === c.key ? 'var(--brand)' : 'var(--border)'}`,
+              }}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+        <input
+          placeholder="Buscar por hospital o ID"
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+          style={{ width: 280, padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13.5, fontFamily: 'var(--font)' }}
+        />
+      </div>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-hospital-50 text-left">
-            <tr>
-              <th className="p-3">ID</th>
-              <th className="p-3">Archivo</th>
-              <th className="p-3">Hospital</th>
-              <th className="p-3">Período</th>
-              <th className="p-3">Estado</th>
-              <th className="p-3">Firmas</th>
-              <th className="p-3">Subida</th>
-              <th className="p-3">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {planillas.map((p) => (
-              <tr key={p.id} className="border-t hover:bg-gray-50">
-                <td className="p-3 font-mono">{p.id}</td>
-                <td className="p-3">{p.nombreArchivo}</td>
-                <td className="p-3">{p.hospital}</td>
-                <td className="p-3">{p.periodo}</td>
-                <td className="p-3">
-                  <span className={`px-2 py-0.5 rounded text-xs ${COLOR_ESTADO[p.estado] ?? ''}`}>
-                    {p.estado}
-                  </span>
-                </td>
-                <td className="p-3 text-xs text-gray-500">
+      {error && <p style={{ color: 'var(--risk-critico)', fontSize: 13, marginBottom: 12 }}>{error}</p>}
+
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+        <div
+          style={{
+            display: 'grid', gridTemplateColumns: '0.5fr 1.3fr 0.7fr 0.7fr 0.8fr 0.9fr 2fr',
+            padding: '12px 20px', background: 'var(--surface-alt)', borderBottom: '1px solid var(--border)',
+            fontSize: 11.5, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em',
+          }}
+        >
+          <div>ID</div><div>Hospital</div><div>Período</div><div>Firmas</div><div>Estado</div><div>Subida</div><div>Acciones</div>
+        </div>
+
+        {cargando && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-faint)' }}>Cargando...</div>}
+
+        {!cargando &&
+          filtradas.map((p) => {
+            const em = estadoMeta(p.estado);
+            return (
+              <div
+                key={p.id}
+                className="row-hover"
+                style={{
+                  display: 'grid', gridTemplateColumns: '0.5fr 1.3fr 0.7fr 0.7fr 0.8fr 0.9fr 2fr',
+                  padding: '14px 20px', borderBottom: '1px solid var(--border)', alignItems: 'center',
+                }}
+              >
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 500 }}>#{p.id}</div>
+                <div style={{ fontSize: 13.5 }}>{p.hospital}</div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{p.periodo}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                   {p.revisadoNombre ? '✅' : '⬜'} Rev · {p.aprobadoNombre ? '✅' : '⬜'} Aprob
-                </td>
-                <td className="p-3 text-xs text-gray-500">
-                  {new Date(p.createdAt).toLocaleString('es-EC')}
-                </td>
-                <td className="p-3">
-                  <div className="flex gap-1.5 flex-wrap">
-                    <button
-                      onClick={() => navigate(`/procesar?planillaId=${p.id}`)}
-                      className="bg-hospital-600 text-white px-2 py-1 rounded text-xs hover:bg-hospital-700"
-                    >
-                      Procesar
-                    </button>
-                    <button
-                      onClick={() => navigate(`/reportes?planillaId=${p.id}`)}
-                      className="border px-2 py-1 rounded text-xs hover:bg-gray-50"
-                    >
-                      Reportes
-                    </button>
-                    <button
-                      onClick={() => setEditando(p)}
-                      className="border px-2 py-1 rounded text-xs hover:bg-gray-50"
-                    >
-                      Editar
-                    </button>
-                    <button
-                      onClick={() => handleEliminar(p)}
-                      className="border border-red-300 text-red-600 px-2 py-1 rounded text-xs hover:bg-red-50"
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {!cargando && planillas.length === 0 && (
-              <tr>
-                <td colSpan={8} className="p-6 text-center text-gray-400">
-                  No hay planillas subidas todavía.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                </div>
+                <div>
+                  <span style={{ background: em.bg, color: em.color, padding: '4px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 600 }}>
+                    {em.label}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+                  {new Date(p.createdAt).toLocaleDateString('es-EC')}
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <button onClick={() => navigate(`/procesar?planillaId=${p.id}`)} className="btn-secondary" style={{ padding: '5px 9px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
+                    Procesar
+                  </button>
+                  <button onClick={() => navigate(`/revisar-riesgo/${p.id}`)} className="btn-primary" style={{ padding: '5px 9px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
+                    Riesgo →
+                  </button>
+                  <button onClick={() => navigate(`/auditoria?planillaId=${p.id}`)} className="btn-secondary" style={{ padding: '5px 9px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
+                    Auditoría
+                  </button>
+                  <button onClick={() => setEditando(p)} className="btn-secondary" style={{ padding: '5px 9px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
+                    Editar
+                  </button>
+                  <button
+                    onClick={() => handleEliminar(p)}
+                    style={{ padding: '5px 9px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'var(--risk-critico-bg)', color: 'var(--risk-critico)', border: '1px solid var(--risk-critico-bg)', cursor: 'pointer' }}
+                  >
+                    Eliminar
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+
+        {!cargando && filtradas.length === 0 && (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-faint)' }}>No hay planillas que coincidan.</div>
+        )}
       </div>
 
       {editando && (
@@ -190,58 +236,46 @@ function ModalEditar({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md space-y-3">
-        <h2 className="font-semibold text-hospital-900">Editar planilla #{planilla.id}</h2>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+      <div style={{ background: 'var(--surface)', borderRadius: 12, padding: 28, width: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+        <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 18 }}>Editar planilla #{planilla.id}</div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Hospital</label>
-          <input
-            value={hospital}
-            onChange={(e) => setHospital(e.target.value)}
-            className="mt-1 w-full border rounded px-3 py-2"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Período</label>
-          <input
-            value={periodo}
-            onChange={(e) => setPeriodo(e.target.value)}
-            className="mt-1 w-full border rounded px-3 py-2"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Nombre revisor</label>
-          <input
-            value={revisadoNombre}
-            onChange={(e) => setRevisadoNombre(e.target.value)}
-            className="mt-1 w-full border rounded px-3 py-2"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Nombre aprobador</label>
-          <input
-            value={aprobadoNombre}
-            onChange={(e) => setAprobadoNombre(e.target.value)}
-            className="mt-1 w-full border rounded px-3 py-2"
-          />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <Campo label="Hospital" value={hospital} onChange={setHospital} />
+          <Campo label="Período" value={periodo} onChange={setPeriodo} />
+          <Campo label="Nombre revisor" value={revisadoNombre} onChange={setRevisadoNombre} />
+          <Campo label="Nombre aprobador" value={aprobadoNombre} onChange={setAprobadoNombre} />
         </div>
 
-        {error && <p className="text-red-600 text-sm">{error}</p>}
+        {error && <p style={{ color: 'var(--risk-critico)', fontSize: 13, marginTop: 10 }}>{error}</p>}
 
-        <div className="flex justify-end gap-2 pt-2">
-          <button onClick={onClose} className="px-4 py-2 rounded text-sm border">
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
+          <button onClick={onClose} className="btn-secondary" style={{ padding: '9px 16px', borderRadius: 8, fontSize: 13.5, fontWeight: 600 }}>
             Cancelar
           </button>
-          <button
-            onClick={handleGuardar}
-            disabled={guardando}
-            className="px-4 py-2 rounded text-sm bg-hospital-600 text-white hover:bg-hospital-700 disabled:opacity-50"
-          >
+          <button onClick={handleGuardar} disabled={guardando} className="btn-primary" style={{ padding: '9px 16px', borderRadius: 8, fontSize: 13.5, fontWeight: 600 }}>
             {guardando ? 'Guardando...' : 'Guardar'}
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function Campo({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }): JSX.Element {
+  return (
+    <div>
+      <label style={{ fontSize: 12.5, fontWeight: 500, display: 'block', marginBottom: 6 }}>{label}</label>
+      <input value={value} onChange={(e) => onChange(e.target.value)} style={{ width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13.5, fontFamily: 'var(--font)' }} />
+    </div>
+  );
+}
+
+function TarjetaStat({ label, valor, colorVar }: { label: string; valor: number; colorVar?: string }): JSX.Element {
+  return (
+    <div style={{ background: colorVar ? `var(${colorVar}-bg)` : 'var(--surface)', border: `1px solid ${colorVar ? `var(${colorVar}-bg)` : 'var(--border)'}`, borderRadius: 10, padding: 20 }}>
+      <div style={{ fontSize: 12.5, color: colorVar ? `var(${colorVar})` : 'var(--text-muted)', fontWeight: 500 }}>{label}</div>
+      <div style={{ marginTop: 8, fontSize: 26, fontWeight: 700, color: colorVar ? `var(${colorVar})` : 'var(--text)' }}>{valor}</div>
     </div>
   );
 }

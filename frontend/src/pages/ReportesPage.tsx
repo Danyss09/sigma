@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { axiosClient } from '../api/axiosClient';
 import {
   generarIndividuales,
   generarConsolidadas,
@@ -11,8 +11,7 @@ import {
 } from '../api/reportesApi';
 
 function ReportesPage(): JSX.Element {
-  const [searchParams] = useSearchParams();
-  const [planillaId, setPlanillaId] = useState(searchParams.get('planillaId') ?? '');
+  const [planillaId, setPlanillaId] = useState('');
   const [servicios, setServicios] = useState<string[]>([]);
   const [servicioSeleccionado, setServicioSeleccionado] = useState('');
   const [cargando, setCargando] = useState(false);
@@ -79,6 +78,28 @@ function ReportesPage(): JSX.Element {
     }
   }
 
+  async function handleUnirTodas(): Promise<void> {
+    setError(null);
+    if (!planillaId) {
+      setError('Indica el planilla_id');
+      return;
+    }
+    setCargando(true);
+    try {
+      await axiosClient.post(
+        `/planillas/${planillaId}/unir-individuales`,
+        null,
+        { params: servicioSeleccionado ? { servicio: servicioSeleccionado } : {} },
+      );
+      const lista = await listarResultados(Number(planillaId));
+      setResultados(lista);
+    } catch (err: any) {
+      setError(err?.response?.data?.message ?? 'Error al unir los PDF individuales');
+    } finally {
+      setCargando(false);
+    }
+  }
+
   return (
     <div className="max-w-2xl">
       <h1 className="text-xl font-bold text-hospital-900 mb-4">Generar reportes</h1>
@@ -115,7 +136,7 @@ function ReportesPage(): JSX.Element {
 
         {error && <p className="text-red-600 text-sm">{error}</p>}
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button
             onClick={() => ejecutar(generarIndividuales)}
             disabled={cargando}
@@ -129,6 +150,13 @@ function ReportesPage(): JSX.Element {
             className="bg-hospital-600 text-white px-4 py-2 rounded hover:bg-hospital-700 disabled:opacity-50 text-sm"
           >
             Generar consolidada{servicioSeleccionado ? ` (${servicioSeleccionado})` : 's (todas)'}
+          </button>
+          <button
+            onClick={handleUnirTodas}
+            disabled={cargando}
+            className="border px-4 py-2 rounded text-sm hover:bg-gray-50 disabled:opacity-50"
+          >
+            Unir todas las individuales en un PDF
           </button>
           <button
             onClick={verResultados}

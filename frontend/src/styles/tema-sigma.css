@@ -1,0 +1,61 @@
+/* Tema visual calcado del prototipo (Dashboard.dc.html, RevisarRiesgo.dc.html, etc.) */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg: oklch(97.5% 0.004 250);
+  --surface: oklch(100% 0 0);
+  --surface-alt: oklch(96% 0.006 250);
+  --border: oklch(89% 0.01 250);
+  --border-strong: oklch(80% 0.015 250);
+  --text: oklch(23% 0.02 255);
+  --text-muted: oklch(48% 0.02 255);
+  --text-faint: oklch(65% 0.015 255);
+  --brand: oklch(48% 0.13 235);
+  --brand-dark: oklch(30% 0.10 240);
+  --brand-light: oklch(94% 0.03 235);
+  --risk-bajo: oklch(52% 0.14 152);
+  --risk-bajo-bg: oklch(95% 0.045 152);
+  --risk-medio: oklch(56% 0.15 78);
+  --risk-medio-bg: oklch(95% 0.05 85);
+  --risk-alto: oklch(56% 0.19 45);
+  --risk-alto-bg: oklch(95% 0.06 50);
+  --risk-critico: oklch(50% 0.20 25);
+  --risk-critico-bg: oklch(95% 0.06 25);
+  --font: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--text); }
+a { color: var(--brand); text-decoration: none; }
+a:hover { color: var(--brand-dark); text-decoration: underline; }
+
+.btn-primary {
+  background: var(--brand); color: #fff; border: none; cursor: pointer;
+  transition: background .15s ease; font-family: var(--font);
+}
+.btn-primary:hover { background: var(--brand-dark); }
+.btn-primary:disabled { background: var(--border-strong); cursor: not-allowed; }
+
+.btn-secondary {
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  cursor: pointer; transition: all .15s ease; font-family: var(--font);
+}
+.btn-secondary:hover { background: var(--surface-alt); border-color: var(--border-strong); }
+
+.btn-done {
+  background: var(--risk-bajo-bg); color: var(--risk-bajo);
+  border: 1px solid var(--risk-bajo-bg); cursor: default;
+}
+
+.chip { cursor: pointer; transition: all .15s ease; font-family: var(--font); }
+.row-hover:hover { background: var(--surface-alt) !important; }
+.row-toggle { cursor: pointer; transition: background .15s ease; }
+.row-toggle:hover { background: var(--surface-alt) !important; }
+.icon-btn { cursor: pointer; background: none; border: none; color: var(--text-faint); }
+.icon-btn:hover { color: var(--text-muted); }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--brand) !important; box-shadow: 0 0 0 3px var(--brand-light);
+}
+.dropzone { cursor: pointer; transition: all .15s ease; }
+.dropzone:hover { background: var(--brand-light) !important; border-color: var(--brand) !important; }

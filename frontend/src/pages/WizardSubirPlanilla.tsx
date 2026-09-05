@@ -2,8 +2,7 @@ import { useState, FormEvent } from 'react';
 import { subirPlanilla, PlanillaSubida } from '../api/planillasApi';
 import { useAuthStore } from '../store/authStore';
 
-// Funcional, sin diseño elaborado (así lo marcamos en el DoD del Sprint 1
-// para no perder tiempo puliendo visualmente esta semana).
+
 function WizardSubirPlanilla(): JSX.Element {
   const [hospital, setHospital] = useState('Hospital del Día Chimbacalle');
   const [periodo, setPeriodo] = useState('');

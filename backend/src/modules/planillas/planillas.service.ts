@@ -1,9 +1,11 @@
 import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, QueryRunner } from 'typeorm';
+import type { Multer } from 'multer';
+import { ResponsablesService } from '../responsables/responsables.service';
 import * as ExcelJS from 'exceljs';
 import * as crypto from 'crypto';
-
+import { MatchingService } from '../matching/matching.service';
 import { Planilla } from './entities/planilla.entity';
 import { Tramite } from '../tramites/entities/tramite.entity';
 import { Expediente } from '../expedientes/entities/expediente.entity';
@@ -35,6 +37,8 @@ export class PlanillasService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly minioService: MinioService,
+    private readonly matchingService: MatchingService,
+    private readonly responsablesService: ResponsablesService,
   ) { }
 
   /**
@@ -198,8 +202,10 @@ export class PlanillasService {
     let tramite = tramitesCache.get(numeroTramite);
     if (!tramite) {
       tramite =
-        (await queryRunner.manager.findOne(Tramite, { where: { numeroTramite } })) ?? undefined;
-
+        tramite =
+        (await queryRunner.manager.findOne(Tramite, {
+          where: { numeroTramite, planilla: { id: planilla.id } },
+        })) ?? undefined;
       if (!tramite) {
         tramite = queryRunner.manager.create(Tramite, {
           numeroTramite,
@@ -267,22 +273,33 @@ export class PlanillasService {
       this.parsearFecha(leer('fechaAtencion')) ?? tramite.mesAnoServicio;
 
     // --- 4. Validación contra el catálogo correspondiente (3.1) ---
+    // Ahora vía MatchingService (Fase 2): clasifica EXACTA/NORMALIZADA_UNICA/
+    // AMBIGUA/NO_ENCONTRADO, y cae automáticamente a las tablas legacy
+    // (tarifas/medicamentos_insumos) mientras ningún catálogo esté ACTIVO.
     let tarifa: Tarifa | null = null;
     let medicamento: MedicamentoInsumo | null = null;
 
-    if (esMedicamento) {
-      medicamento = await queryRunner.manager.findOne(MedicamentoInsumo, {
-        where: { codigoAs400: codigoOriginal },
-      });
-    } else {
-      tarifa = await queryRunner.manager.findOne(Tarifa, {
-        where: { codigoTpsns: codigoOriginal, nivel },
-      });
+    const resultadoMatch = esMedicamento
+      ? await this.matchingService.buscarMedicamento(codigoOriginal)
+      : await this.matchingService.buscarProcedimiento(codigoOriginal, nivel);
+
+    if (resultadoMatch.encontrado) {
+      // Re-consultamos la ENTIDAD real (no el resultado plano del match)
+      // porque DetalleServicio necesita la relación FK verdadera, no solo
+      // los valores — el código encontrado puede diferir del original si
+      // la coincidencia fue NORMALIZADA_UNICA (13 dígitos -> 10 dígitos).
+      if (esMedicamento) {
+        medicamento = await queryRunner.manager.findOne(MedicamentoInsumo, {
+          where: { codigoAs400: resultadoMatch.codigoEncontrado ?? codigoOriginal },
+        });
+      } else {
+        tarifa = await queryRunner.manager.findOne(Tarifa, {
+          where: { codigoTpsns: resultadoMatch.codigoEncontrado ?? codigoOriginal, nivel },
+        });
+      }
     }
 
-
     const encontrado = esMedicamento ? !!medicamento : !!tarifa;
-
     if (!encontrado) {
       if (esMedicamento) {
         // No tenemos catálogo AS-400 disponible: NO es un rechazo, es una
@@ -319,11 +336,17 @@ export class PlanillasService {
           tramite: numeroTramite,
           cedula,
           codigoOriginal,
-          descripcion: descripcionFila || '(sin descripción)',
+          descripcion:
+            descripcionFila ||
+            (resultadoMatch.tipoCoincidencia === 'AMBIGUA'
+              ? '(coincidencia ambigua en catálogo, requiere validación manual)'
+              : '(sin descripción)'),
         });
-        // No sumamos a valorTotalSolicitado: es un monto provisional sin
+
+        await this.matchingService.registrarMatch(queryRunner, detallePendiente.id, codigoOriginal, resultadoMatch);        // No sumamos a valorTotalSolicitado: es un monto provisional sin
         // validar, no debe contarse como "solicitado confirmado" todavía.
         return;
+
       }
 
       // TPSNS: SÍ tenemos catálogo cargado — si no aparece, es un rechazo real.
@@ -346,8 +369,10 @@ export class PlanillasService {
         estadoFila: EstadoFila.RECHAZADO,
       });
       const guardado = await queryRunner.manager.save(DetalleServicio, detalleRechazado);
+      await this.matchingService.registrarMatch(queryRunner, guardado.id, codigoOriginal, resultadoMatch);
 
       const decisionAutomatica = queryRunner.manager.create(DecisionAuditoriaEntity, {
+
         detalleServicio: guardado,
         auditor: null,
         decision: DecisionAuditoria.RECHAZADO,
@@ -372,6 +397,9 @@ export class PlanillasService {
     const valorUnitarioOficial = esMedicamento
       ? Number(medicamento!.precioOficial)
       : Number(tarifa!.valorOficial);
+    const descripcionCatalogo = esMedicamento ? medicamento!.descripcion : tarifa!.descripcion;
+    const seAutocompletoDescripcion = !descripcionFila && !!descripcionCatalogo;
+    const descripcionFinal = descripcionFila || descripcionCatalogo;
 
     const subtotal = round2(cantidad * valorUnitarioSolicitado);
     const valorSolicitado = round2(subtotal * porcentajeModificador);
@@ -386,7 +414,7 @@ export class PlanillasService {
       medicamentoInsumo: esMedicamento ? medicamento : null,
       fechaAtencion,
       codigoOriginal,
-      descripcion: descripcionFila || (esMedicamento ? medicamento!.descripcion : tarifa!.descripcion),
+      descripcion: descripcionFinal,
       cantidad,
       valorUnitarioSolicitado,
       valorUnitarioOficial,
@@ -398,16 +426,28 @@ export class PlanillasService {
       estadoFila: EstadoFila.PENDIENTE,
     });
 
-    await queryRunner.manager.save(DetalleServicio, detalle);
-    resultado.detallesInsertados++;
+    const detalleGuardado = await queryRunner.manager.save(DetalleServicio, detalle);
+    if (seAutocompletoDescripcion) {
+      await this.matchingService.registrarAutocompletado(
+        queryRunner,
+        detalleGuardado.id,
+        'descripcion',
+        null, // no había valor original, la MATRIZ venía vacía
+        descripcionFinal,
+        resultadoMatch,
+      );
+    }
+    await this.matchingService.registrarMatch(queryRunner, detalleGuardado.id, codigoOriginal, resultadoMatch); resultado.detallesInsertados++;
+
     resultado.valorTotalSolicitado = round2(resultado.valorTotalSolicitado + valorSolicitado);
   }
- /**
-   * US-01/US-02 del Sprint 1: sube el archivo a MinIO con naming auditado
-   * y crea la fila `planillas`. Reemplaza el INSERT manual por SQL que
-   * usabas para las pruebas — a partir de ahora el flujo real es:
-   * subirYRegistrar() -> devuelve planillaId -> procesarMatriz(planillaId).
-   */
+
+  /**
+    * US-01/US-02 del Sprint 1: sube el archivo a MinIO con naming auditado
+    * y crea la fila `planillas`. Reemplaza el INSERT manual por SQL que
+    * usabas para las pruebas — a partir de ahora el flujo real es:
+    * subirYRegistrar() -> devuelve planillaId -> procesarMatriz(planillaId).
+    */
   async subirYRegistrar(
     file: Express.Multer.File,
     dto: SubirPlanillaDto,
@@ -432,7 +472,7 @@ export class PlanillasService {
     if (yaExiste) {
       throw new BadRequestException(
         `Este archivo ya fue subido antes (planilla id=${yaExiste.id}, estado=${yaExiste.estado}). ` +
-          'Si necesitas reprocesarlo, usa ese id directo en /planillas/procesar.',
+        'Si necesitas reprocesarlo, usa ese id directo en /planillas/procesar.',
       );
     }
 
@@ -447,18 +487,29 @@ export class PlanillasService {
       'Content-Type': file.mimetype,
     });
 
-    const planilla = this.dataSource.getRepository(Planilla).create({
-      nombreArchivo: file.originalname,
-      minioPath: objectName,
-      hashSha256,
-      hospital: dto.hospital,
-      periodo: dto.periodo,
-      subidoPor: { id: usuarioId } as any,
-      estado: PlanillaEstado.SUBIDA,
-    });
+     const defaults = await this.responsablesService.obtenerValoresParaNuevaPlanilla();
+
+     const planilla = this.dataSource.getRepository(Planilla).create({
+       nombreArchivo: file.originalname,
+       minioPath: objectName,
+       hashSha256,
+       hospital: dto.hospital,
+       periodo: dto.periodo,
+       subidoPor: { id: usuarioId } as any,
+       estado: PlanillaEstado.SUBIDA,
+       revisadoNombre: defaults.revisadoNombre,
+       revisadoIdentificacion: defaults.revisadoIdentificacion,
+       revisadoCargo: defaults.revisadoCargo,
+       aprobadoNombre: defaults.aprobadoNombre,
+       aprobadoIdentificacion: defaults.aprobadoIdentificacion,
+       aprobadoCargo: defaults.aprobadoCargo,
+     });
+
 
     const guardada = await this.dataSource.getRepository(Planilla).save(planilla);
-
+    // Snapshot inmutable de los responsables activos EN ESTE MOMENTO --
+    // un cambio futuro en Configuración nunca afecta esta planilla.
+    await this.responsablesService.crearSnapshotParaPlanilla(guardada.id);
     this.logger.log(`Planilla ${guardada.id} subida a MinIO: ${objectName}`);
 
     return guardada;

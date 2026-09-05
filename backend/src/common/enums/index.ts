@@ -71,3 +71,4 @@ export enum TipoPlantilla {
   INDIVIDUAL = 'INDIVIDUAL',
   CONSOLIDADA = 'CONSOLIDADA',
 }
+

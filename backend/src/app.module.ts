@@ -1,7 +1,7 @@
 import { Module, Controller, Get } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-
+import { CatalogosModule } from './modules/catalogos/catalogos.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { PlanillasModule } from './modules/planillas/planillas.module';
@@ -9,14 +9,6 @@ import { AuditoriaModule } from './modules/auditoria/auditoria.module';
 import { Plantilla } from './modules/planillas/entities/plantilla.entity';
 
 import { ResultadoPlanilla } from './modules/planillas/entities/resultado-planilla.entity';
-// Se listan TODAS las entidades explícitamente (en vez de confiar solo en
-// autoLoadEntities). Motivo: autoLoadEntities únicamente registra las
-// entidades que aparecen en algún TypeOrmModule.forFeature([...]) de un
-// módulo importado. PrediccionRiesgo y Factura todavía no tienen su propio
-// módulo (los construimos en un paso posterior), pero Expediente y
-// Planilla ya tienen relaciones (@OneToOne / futuras) hacia ellas, y
-// TypeORM necesita conocer TODAS las entidades relacionadas al construir
-// los metadatos, o falla con "Entity metadata for X was not found".
 import { User } from './modules/users/entities/user.entity';
 import { UserSession } from './modules/auth/entities/user-session.entity';
 import { Tarifa } from './modules/tarifas/entities/tarifa.entity';
@@ -29,7 +21,9 @@ import { DecisionAuditoriaEntity } from './modules/auditoria/entities/decision-a
 import { Factura } from './modules/facturas/entities/factura.entity';
 import { PrediccionRiesgo } from './modules/predicciones/entities/prediccion-riesgo.entity';
 import { AuditLog } from './modules/audit-log/entities/audit-log.entity';
-
+import { PrediccionesModule } from './modules/predicciones/predicciones.module';
+import { CorreccionAutomatica } from './modules/predicciones/entities/correccion-automatica.entity';
+import { MotivoObjecion } from './modules/motivos-objecion/entities/motivo-objecion.entity';
 const ALL_ENTITIES = [
   User,
   UserSession,
@@ -45,6 +39,9 @@ const ALL_ENTITIES = [
   Plantilla,
   ResultadoPlanilla,
   AuditLog,
+  CorreccionAutomatica,
+  MotivoObjecion, 
+  CatalogosModule,
 ];
 
 // Health check mínimo para verificar que la app y la conexión a la BD
@@ -71,8 +68,7 @@ class HealthController {
         password: config.get<string>('POSTGRES_PASSWORD'),
         database: config.get<string>('POSTGRES_DB'),
         entities: ALL_ENTITIES,
-        // El esquema se crea a mano con los .sql de la carpeta /sql,
-        // NUNCA con synchronize:true (borraría/alteraría tablas reales).
+        autoLoadEntities: true,
         synchronize: false,
       }),
     }),
@@ -80,6 +76,7 @@ class HealthController {
     AuthModule,
     PlanillasModule,
     AuditoriaModule,
+    PrediccionesModule,
   ],
   controllers: [HealthController],
 })
