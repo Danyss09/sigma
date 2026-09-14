@@ -37,4 +37,7 @@ export class PrediccionRiesgo {
 
   @CreateDateColumn({ name: 'fecha_prediccion', type: 'timestamp' })
   fechaPrediccion: Date;
+  
+  @Column({ name: 'base_value', type: 'numeric', precision: 6, scale: 4, nullable: true })
+  baseValue: number | null;
 }

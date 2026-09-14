@@ -81,8 +81,7 @@ export class PrediccionesService {
         );
       } catch (error) {
         this.logger.error(
-          `Error evaluando riesgo del detalle ${detalle.id}: ${
-            (error as Error).message
+          `Error evaluando riesgo del detalle ${detalle.id}: ${(error as Error).message
           }`,
         );
       }
@@ -183,6 +182,7 @@ export class PrediccionesService {
         nivelRiesgo,
         puntaje: round2(data.score * 100),
         explicacionShap: data.shap_values,
+        baseValue: data.base_value,
       });
 
     await this.prediccionesRepository.save(
@@ -195,9 +195,9 @@ export class PrediccionesService {
 
     const diferencia = Math.abs(
       Number(detalle.valorUnitarioOficial) -
-        Number(
-          detalle.valorUnitarioSolicitado,
-        ),
+      Number(
+        detalle.valorUnitarioSolicitado,
+      ),
     );
 
     const noCoincideConCatalogo =
@@ -237,6 +237,34 @@ export class PrediccionesService {
       nivelRiesgo,
       puntaje: prediccion.puntaje,
       corregido: false,
+    };
+  }
+  /**
+     * Tasa historica REAL de rechazo total (pertinencia medica /
+     * documentacion) para un codigo TPSNS. Es informativo para el
+     * auditor -- NUNCA se usa como feature del modelo ni se combina
+     * con el riesgo IA. Requiere al menos 3 casos reales para reportar
+     * algo (evita tasas basadas en 1 caso aislado).
+     */
+  async obtenerTasaRechazoHistorica(codigo: string): Promise<{
+    disponible: boolean;
+    totalApariciones?: number;
+    rechazosTotales?: number;
+    tasaRechazo?: number;
+  }> {
+    const fila = await this.dataSource.query(
+      `SELECT total_apariciones, rechazos_totales, tasa_rechazo
+       FROM vista_tasa_rechazo_codigo WHERE codigo_tpsns = $1`,
+      [codigo],
+    );
+    if (!fila[0]) {
+      return { disponible: false };
+    }
+    return {
+      disponible: true,
+      totalApariciones: fila[0].total_apariciones,
+      rechazosTotales: fila[0].rechazos_totales,
+      tasaRechazo: Number(fila[0].tasa_rechazo),
     };
   }
 
@@ -280,7 +308,7 @@ export class PrediccionesService {
      */
     if (
       validacionCatalogo ===
-        'INCONSISTENTE' ||
+      'INCONSISTENTE' ||
       validacionCatalogo === 'DIFERENCIA'
     ) {
       return 'CONTROL_TARIFAS';
@@ -308,7 +336,7 @@ export class PrediccionesService {
         (featurePrincipal[0] ===
           'cantidad' ||
           featurePrincipal[0] ===
-            'veces_repetido_beneficiario')
+          'veces_repetido_beneficiario')
       ) {
         return 'PERTINENCIA_MEDICA';
       }
@@ -384,14 +412,14 @@ export class PrediccionesService {
         detalle.porcentajeModificador,
       );
 
-         const nuevoSubtotal = round2(
+      const nuevoSubtotal = round2(
         cantidad * valorOficial,
       );
 
       const nuevoValorSolicitado =
         round2(
           nuevoSubtotal *
-            porcentajeModificador,
+          porcentajeModificador,
         );
 
       detalle.valorUnitarioSolicitado = valorOficial;
@@ -460,8 +488,8 @@ export class PrediccionesService {
 
       this.logger.warn(
         `Detalle ${detalle.id} corregido automáticamente: ` +
-          `$${valorAnterior} -> $${nuevoValorSolicitado} ` +
-          `(riesgo ${prediccion.nivelRiesgo} ${prediccion.puntaje}%)`,
+        `$${valorAnterior} -> $${nuevoValorSolicitado} ` +
+        `(riesgo ${prediccion.nivelRiesgo} ${prediccion.puntaje}%)`,
       );
 
       return {
@@ -675,17 +703,17 @@ export class PrediccionesService {
       const correccion =
         prediccion
           ? await this.correccionesRepository.findOne(
-              {
-                where: {
-                  detalleServicio: {
-                    id: detalle.id,
-                  },
-                },
-                order: {
-                  createdAt: 'DESC',
+            {
+              where: {
+                detalleServicio: {
+                  id: detalle.id,
                 },
               },
-            )
+              order: {
+                createdAt: 'DESC',
+              },
+            },
+          )
           : null;
 
       /**
@@ -693,10 +721,10 @@ export class PrediccionesService {
        */
       const valorOficial =
         detalle.valorUnitarioOficial !==
-        null
+          null
           ? Number(
-              detalle.valorUnitarioOficial,
-            )
+            detalle.valorUnitarioOficial,
+          )
           : null;
 
       const tieneCatalogo =
@@ -726,21 +754,21 @@ export class PrediccionesService {
         const valorComparar =
           correccion
             ? Number(
-                correccion.valorAnterior,
-              )
+              correccion.valorAnterior,
+            )
             : Number(
-                detalle
-                  .valorUnitarioSolicitado,
-              );
+              detalle
+                .valorUnitarioSolicitado,
+            );
 
         diferencia = Math.abs(
           valorOficial -
-            valorComparar,
+          valorComparar,
         );
 
         validacionCatalogo =
           diferencia >
-          TOLERANCIA_VALOR
+            TOLERANCIA_VALOR
             ? 'DIFERENCIA'
             : 'CORRECTA';
       }
@@ -793,8 +821,8 @@ export class PrediccionesService {
           valorOficial === null
             ? null
             : diferencia !== null &&
-                diferencia <=
-                  TOLERANCIA_VALOR
+              diferencia <=
+              TOLERANCIA_VALOR
               ? 'CORRECTA'
               : 'INCONSISTENTE',
 
@@ -814,7 +842,10 @@ export class PrediccionesService {
         await this.obtenerMotivosSugeridos(
           grupoSugerido,
         );
-
+      const tasaRechazoHistorica =
+        await this.obtenerTasaRechazoHistorica(
+          detalle.codigoOriginal
+        );
       /**
        * Construcción final de respuesta.
        */
@@ -850,15 +881,18 @@ export class PrediccionesService {
         puntaje:
           prediccion?.puntaje !==
             undefined &&
-          prediccion?.puntaje !== null
+            prediccion?.puntaje !== null
             ? Number(
-                prediccion.puntaje,
-              )
+              prediccion.puntaje,
+            )
             : null,
 
         shapValues:
           prediccion
             ?.explicacionShap ?? null,
+        baseValue: prediccion?.baseValue !== undefined && prediccion?.baseValue !== null
+          ? Number(prediccion.baseValue)
+          : null,
 
         /**
          * NUEVO:
@@ -871,11 +905,11 @@ export class PrediccionesService {
         valorAnteriorCorreccion:
           correccion?.valorAnterior !==
             undefined &&
-          correccion?.valorAnterior !==
+            correccion?.valorAnterior !==
             null
             ? Number(
-                correccion.valorAnterior,
-              )
+              correccion.valorAnterior,
+            )
             : null,
 
         motivoCorreccion:
@@ -891,6 +925,8 @@ export class PrediccionesService {
 
         estadoFila:
           detalle.estadoFila,
+
+        tasaRechazoHistorica,
       });
     }
 
@@ -907,7 +943,7 @@ function round2(
   return (
     Math.round(
       (valor + Number.EPSILON) *
-        100,
+      100,
     ) / 100
   );
 }

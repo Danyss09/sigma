@@ -2,7 +2,10 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
+import * as archiver from 'archiver';
+import * as fs from 'fs';
 import * as path from 'path';
+import { Response } from 'express';
 
 import { DetalleServicio } from '../../detalles/entities/detalle-servicio.entity';
 import { Planilla } from '../entities/planilla.entity';
@@ -49,6 +52,13 @@ const CELDA_TOTAL_NUMERO = 'I54';
 const REVISOR = { nombre: 'C60', identificacion: 'C61', cargo: 'C62' };
 const APROBADOR = { nombre: 'C65', identificacion: 'C66', cargo: 'C67' };
 
+// FIX: 'mm-dd-yy' (formato tipo Excel abreviado) ya estaba correcto en
+// el .xlsx generado (confirmado inspeccionando un archivo real), pero
+// LibreOffice a veces no interpreta bien ese formato al convertir a
+// PDF. Se usa un formato explícito de 4 dígitos, más compatible entre
+// motores de renderizado.
+const FORMATO_FECHA = 'dd/mm/yyyy';
+
 interface ContextoRequest {
   usuarioId: number;
 }
@@ -85,10 +95,10 @@ export class GeneradorIndividualesService {
     _ctx: ContextoRequest,
   ): Promise<ResultadoGeneracion> {
     const planilla = await this.planillasRepository.findOneOrFail({ where: { id: planillaId } });
-        if (!planilla.revisadoNombre || !planilla.aprobadoNombre) {
+    if (!planilla.revisadoNombre || !planilla.aprobadoNombre) {
       throw new BadRequestException(
         'Esta planilla no tiene las firmas completas (revisor y/o aprobador). ' +
-        'Complétalas en "Editar" antes de generar los documentos finales.',
+          'Complétalas en "Editar" antes de generar los documentos finales.',
       );
     }
     const grupos = await this.agruparPorServicioYTramite(planillaId, dto);
@@ -189,13 +199,7 @@ export class GeneradorIndividualesService {
 
     const servicioLimpio = limpiarNombreArchivo(grupo.servicio);
     const tramiteLimpio = limpiarNombreArchivo(grupo.tramite);
-    const carpetaDestino = path.join(
-      process.cwd(),
-      'uploads',
-      'individuales',
-      servicioLimpio,
-      tramiteLimpio,
-    );
+    const carpetaDestino = path.join(process.cwd(), 'uploads', 'individuales', servicioLimpio, tramiteLimpio);
     const nombreBase = `Planilla_${tramiteLimpio}_${servicioLimpio}`;
 
     const workbook = await this.excelService.cargarPlantilla(rutaPlantilla);
@@ -205,6 +209,7 @@ export class GeneradorIndividualesService {
     hoja.getCell(CELDA_TRAMITE).value = grupo.tramite;
     hoja.getCell(CELDA_SERVICIO).value = grupo.servicio;
     hoja.getCell(CELDA_MES_ANO).value = new Date(tramiteEntidad.mesAnoServicio);
+    hoja.getCell(CELDA_MES_ANO).numFmt = 'mmmm/yyyy';
     hoja.getCell(CELDA_CIE10).value = expediente.cie10Codigo;
     hoja.getCell(CELDA_CODIGO_VALIDACION).value = expediente.codigoValidacion ?? '';
     hoja.getCell(CELDA_IDENTIFICACION).value = expediente.identificacion;
@@ -212,7 +217,9 @@ export class GeneradorIndividualesService {
 
     const fechas = grupo.detalles.map((d) => new Date(d.fechaAtencion).getTime());
     hoja.getCell(CELDA_DESDE).value = new Date(Math.min(...fechas));
+    hoja.getCell(CELDA_DESDE).numFmt = FORMATO_FECHA;
     hoja.getCell(CELDA_HASTA).value = new Date(Math.max(...fechas));
+    hoja.getCell(CELDA_HASTA).numFmt = FORMATO_FECHA;
 
     let filaActual = FILA_INICIO_DATOS;
     let totalGeneral = 0;
@@ -221,27 +228,14 @@ export class GeneradorIndividualesService {
       const descripcion =
         detalle.tarifa?.descripcion ?? detalle.medicamentoInsumo?.descripcion ?? detalle.descripcion ?? '';
 
-      // numFmt explícito en TODAS las columnas numéricas: la plantilla
-      // trae estas celdas formateadas como FECHA de fábrica, y sin
-      // forzar el formato Excel muestra "3" como "3/1/1900".
-        this.excelService.escribirFila(hoja, filaActual, [
-        { columna: COLUMNAS.fecha, valor: new Date(detalle.fechaAtencion), numFmt: 'mm-dd-yy' },
-        // FECHA: NO forzar numFmt aquí — ya funcionaba bien antes con el
-        // formato propio de la plantilla; forzarlo causó la regresión
-        // (mostraba el número serie crudo en vez de la fecha).
-        { columna: COLUMNAS.fecha, valor: new Date(detalle.fechaAtencion) },
+      this.excelService.escribirFila(hoja, filaActual, [
+        { columna: COLUMNAS.fecha, valor: new Date(detalle.fechaAtencion), numFmt: FORMATO_FECHA },
         { columna: COLUMNAS.codigo, valor: detalle.codigoOriginal },
         { columna: COLUMNAS.descripcion, valor: descripcion },
         { columna: COLUMNAS.cantidad, valor: Number(detalle.cantidad), numFmt: '0.##' },
         { columna: COLUMNAS.valorUnitario, valor: Number(detalle.valorUnitarioSolicitado), numFmt: '0.0000' },
         { columna: COLUMNAS.subtotal, valor: Number(detalle.subtotal), numFmt: '0.00' },
         { columna: COLUMNAS.clasificador, valor: detalle.clasificador ?? '' },
-        // % MODIFICADOR: en vez de confiar en el formato "%" nativo de
-        // Excel (no se estaba aplicando en esta celda por algo propio de
-        // la plantilla), escribimos el número YA multiplicado por 100 y
-        // un formato de texto literal que solo le pega el símbolo "%" —
-        // más robusto porque no depende del comportamiento de auto-escala
-        // de Excel para el tipo "porcentaje".
         {
           columna: COLUMNAS.modificadorPorcentaje,
           valor: round2(Number(detalle.porcentajeModificador) * 100),
@@ -271,16 +265,17 @@ export class GeneradorIndividualesService {
     hoja.getCell(APROBADOR.identificacion).value = planilla.aprobadoIdentificacion ?? '';
     hoja.getCell(APROBADOR.cargo).value = planilla.aprobadoCargo;
 
+    // Resetea cualquier seleccion de celdas grabada -- ya se confirmo
+    // que en la practica solo deja una celda sola seleccionada (A13),
+    // pero se mantiene por seguridad: no tiene costo y previene
+    // cualquier caso donde SÍ quede un rango multiple grabado.
+    hoja.views = [{ state: 'normal', xSplit: 0, ySplit: 0, topLeftCell: 'A1', activeCell: 'A1' }];
+
     const nombreXlsx = `${nombreBase}.xlsx`;
     const rutaXlsxAbsoluta = await this.excelService.guardar(workbook, nombreXlsx, carpetaDestino);
     const rutaXlsxRelativa = path.relative(process.cwd(), rutaXlsxAbsoluta);
 
-    // PDF real: conversión directa del .xlsx ya generado (con formato,
-    // logo, firmas, todo) — en vez del PDF genérico armado a mano.
-    const rutaPdfAbsoluta = await this.libreOfficeService.convertirXlsxAPdf(
-      rutaXlsxAbsoluta,
-      carpetaDestino,
-    );
+    const rutaPdfAbsoluta = await this.libreOfficeService.convertirXlsxAPdf(rutaXlsxAbsoluta, carpetaDestino);
     const nombrePdf = path.basename(rutaPdfAbsoluta);
     const rutaPdfRelativa = path.relative(process.cwd(), rutaPdfAbsoluta);
 
@@ -304,6 +299,41 @@ export class GeneradorIndividualesService {
     });
 
     return this.resultadosRepository.save([registroXlsx, registroPdf]);
+  }
+
+  /**
+   * NUEVO: descarga todas las individuales YA GENERADAS como archivos
+   * SEPARADOS dentro de un .zip (cada trámite conserva su propio PDF).
+   */
+  async descargarTodasComoZip(planillaId: number, res: Response, servicio?: string): Promise<void> {
+    const qb = this.resultadosRepository
+      .createQueryBuilder('r')
+      .where('r.planilla = :planillaId', { planillaId })
+      .andWhere("r.tipo = 'INDIVIDUAL'")
+      .andWhere("r.formato = 'PDF'");
+    if (servicio) {
+      qb.andWhere('r.servicio = :servicio', { servicio });
+    }
+    const resultados = await qb.orderBy('r.tramite', 'ASC').getMany();
+
+    if (resultados.length === 0) {
+      throw new BadRequestException('No hay planillas individuales generadas todavía. Genéralas primero.');
+    }
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="planillas_individuales_${planillaId}.zip"`);
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.pipe(res);
+
+    for (const resultado of resultados) {
+      const rutaAbsoluta = path.join(process.cwd(), resultado.rutaArchivo);
+      if (fs.existsSync(rutaAbsoluta)) {
+        archive.file(rutaAbsoluta, { name: resultado.nombreArchivo });
+      }
+    }
+
+    await archive.finalize();
   }
 }
 

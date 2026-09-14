@@ -171,7 +171,59 @@ export class PlanillasService {
       await queryRunner.release();
     }
   }
+  /**
+   * Ejercicio del derecho al olvido (LOPDP Art. 15). A diferencia del
+   * borrado administrativo simple, este método:
+   * 1. Exige un motivo explícito.
+   * 2. Registra el evento con una accion LOPDP distinguible.
+   * 3. Borra el archivo de MinIO ademas del registro en BD (el DELETE
+   *    simple de hoy, si no lo hace, deja el binario huerfano en MinIO).
+   */
+  async ejercerDerechoAlOlvido(
+    planillaId: number,
+    motivo: string,
+    ctx: ContextoRequest,
+  ): Promise<void> {
+    const planilla = await this.dataSource.getRepository(Planilla).findOne({ where: { id: planillaId } });
+    if (!planilla) {
+      throw new NotFoundException(`Planilla ${planillaId} no encontrada`);
+    }
 
+    // Borra el binario de MinIO PRIMERO (si esto falla, no queremos
+    // haber borrado ya el registro de BD sin el archivo real).
+    await this.minioService.deleteFile(planilla.minioPath);
+
+    await this.dataSource.getRepository(Planilla).delete(planillaId);
+
+    await this.registrarAuditLog(null as any, {
+      userId: ctx.usuarioId,
+      action: AuditAction.DERECHO_OLVIDO, // agregar este valor al enum AuditAction si no existe
+      fileId: planillaId,
+      ipAddress: ctx.ipAddress,
+      userAgent: ctx.userAgent,
+      resultado: `Ejercicio de derecho al olvido (LOPDP). Motivo: ${motivo}`,
+    });
+  }
+  async obtenerVistaPrevia(planillaId: number, page = 1, limit = 50) {
+    const [items, total] = await this.dataSource
+      .getRepository(DetalleServicio)
+      .createQueryBuilder('detalle')
+      .innerJoin('detalle.expediente', 'expediente')
+      .innerJoin('expediente.tramite', 'tramite')
+      .where('tramite.planilla = :planillaId', { planillaId })
+      .select([
+        'detalle.id', 'detalle.codigoOriginal', 'detalle.descripcion',
+        'detalle.cantidad', 'detalle.valorUnitarioSolicitado', 'detalle.estadoFila',
+        'expediente.nombrePaciente', 'expediente.identificacion',
+        'tramite.numeroTramite', 'tramite.tipoServicio',
+      ])
+      .orderBy('detalle.id', 'ASC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return { items, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
   // -------------------------------------------------------------------
   // Procesamiento de una fila individual
   // -------------------------------------------------------------------
@@ -487,23 +539,23 @@ export class PlanillasService {
       'Content-Type': file.mimetype,
     });
 
-     const defaults = await this.responsablesService.obtenerValoresParaNuevaPlanilla();
+    const defaults = await this.responsablesService.obtenerValoresParaNuevaPlanilla();
 
-     const planilla = this.dataSource.getRepository(Planilla).create({
-       nombreArchivo: file.originalname,
-       minioPath: objectName,
-       hashSha256,
-       hospital: dto.hospital,
-       periodo: dto.periodo,
-       subidoPor: { id: usuarioId } as any,
-       estado: PlanillaEstado.SUBIDA,
-       revisadoNombre: defaults.revisadoNombre,
-       revisadoIdentificacion: defaults.revisadoIdentificacion,
-       revisadoCargo: defaults.revisadoCargo,
-       aprobadoNombre: defaults.aprobadoNombre,
-       aprobadoIdentificacion: defaults.aprobadoIdentificacion,
-       aprobadoCargo: defaults.aprobadoCargo,
-     });
+    const planilla = this.dataSource.getRepository(Planilla).create({
+      nombreArchivo: file.originalname,
+      minioPath: objectName,
+      hashSha256,
+      hospital: dto.hospital,
+      periodo: dto.periodo,
+      subidoPor: { id: usuarioId } as any,
+      estado: PlanillaEstado.SUBIDA,
+      revisadoNombre: defaults.revisadoNombre,
+      revisadoIdentificacion: defaults.revisadoIdentificacion,
+      revisadoCargo: defaults.revisadoCargo,
+      aprobadoNombre: defaults.aprobadoNombre,
+      aprobadoIdentificacion: defaults.aprobadoIdentificacion,
+      aprobadoCargo: defaults.aprobadoCargo,
+    });
 
 
     const guardada = await this.dataSource.getRepository(Planilla).save(planilla);
@@ -629,6 +681,7 @@ export class PlanillasService {
       this.logger.error(`No se pudo marcar la planilla ${planillaId} como ERROR: ${message}`);
     }
   }
+  
 }
 
 function normalizarTexto(texto: string): string {

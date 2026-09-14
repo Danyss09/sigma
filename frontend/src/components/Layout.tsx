@@ -2,6 +2,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 
 const ITEMS_MENU = [
+  { path: '/', label: 'Panel general', roles: ['DIGITADOR', 'ADMIN', 'AUDITOR'] },
   { path: '/planillas', label: 'Planillas', roles: ['DIGITADOR', 'ADMIN', 'AUDITOR'] },
   { path: '/subir', label: 'Nueva carga', roles: ['DIGITADOR', 'ADMIN', 'AUDITOR'] },
   { path: '/auditoria', label: 'Auditoría', roles: ['AUDITOR', 'ADMIN'] },
@@ -9,6 +10,7 @@ const ITEMS_MENU = [
   { path: '/plantillas', label: 'Plantillas base', roles: ['ADMIN'] },
   { path: '/usuarios', label: 'Usuarios', roles: ['ADMIN'] },
   { path: '/configuracion', label: 'Configuración', roles: ['ADMIN'] }];
+
 
 function Layout(): JSX.Element {
   const usuario = useAuthStore((state) => state.usuario);

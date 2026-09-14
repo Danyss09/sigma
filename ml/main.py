@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import json
-
+from pertinencia_service import PayloadValidacionPertinencia, ResultadoValidacionPertinencia, validar_pertinencia
 import joblib
 import numpy as np
 import pandas as pd
@@ -41,6 +41,7 @@ class PrediccionRiesgo(BaseModel):
     score: float
     label: str
     shap_values: dict[str, float]
+    base_value: float
 
 
 def _score_a_nivel(score: float) -> str:
@@ -61,17 +62,15 @@ def health() -> dict:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
+@app.post("/validar-pertinencia", response_model=ResultadoValidacionPertinencia)
+async def validar_pertinencia_endpoint(payload: PayloadValidacionPertinencia):
+       return validar_pertinencia(payload)
 
 @app.post("/predecir-riesgo", response_model=PrediccionRiesgo)
 def predecir_riesgo(detalle: DetalleParaPredecir) -> PrediccionRiesgo:
     if not MODELO_CARGADO:
         raise HTTPException(status_code=503, detail="Modelo no cargado. Corre entrenar_modelo.py primero.")
 
-    # FIX: el modelo se entrenó con un DataFrame (columnas con nombre).
-    # Antes se construía un np.array plano aquí, lo que generaba el
-    # warning "X does not have valid feature names" — no afectaba el
-    # resultado numérico (el orden ya coincidía), pero esta es la forma
-    # correcta y elimina el warning de raíz, no solo lo oculta.
     X = pd.DataFrame(
         [[getattr(detalle, col) for col in COLUMNAS_FEATURES]],
         columns=COLUMNAS_FEATURES,
@@ -88,4 +87,15 @@ def predecir_riesgo(detalle: DetalleParaPredecir) -> PrediccionRiesgo:
 
     shap_dict = {col: float(v) for col, v in zip(COLUMNAS_FEATURES, valores)}
 
-    return PrediccionRiesgo(score=round(score, 4), label=_score_a_nivel(score), shap_values=shap_dict)
+    # <-- NUEVO: Obtener el base_value manejando el formato (lista o valor único)
+    if isinstance(explainer.expected_value, (list, np.ndarray)):
+        base_value = float(explainer.expected_value[1])
+    else:
+        base_value = float(explainer.expected_value)
+
+    return PrediccionRiesgo(
+        score=round(score, 4), 
+        label=_score_a_nivel(score), 
+        shap_values=shap_dict,
+        base_value=base_value
+    )

@@ -42,9 +42,9 @@ export class AuditoriaService {
     const qb = this.dataSource
       .getRepository(DetalleServicio)
       .createQueryBuilder('detalle')
-      .leftJoinAndSelect('detalle.expediente', 'expediente')
-      .leftJoinAndSelect('expediente.tramite', 'tramite')
-      .leftJoinAndSelect('tramite.planilla', 'planilla')
+      .innerJoinAndSelect('detalle.expediente', 'expediente')
+      .innerJoinAndSelect('expediente.tramite', 'tramite')
+      .innerJoinAndSelect('tramite.planilla', 'planilla')
       .where('detalle.estadoFila IN (:...estados)', {
         estados: filtros.estado ? [filtros.estado] : ['PENDIENTE', 'RECHAZADO'],
       });

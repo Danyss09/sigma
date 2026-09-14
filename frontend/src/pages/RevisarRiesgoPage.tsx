@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
 import { obtenerDetallePlanilla, PlanillaListado } from '../api/planillasCrudApi';
 import { obtenerVistaRiesgo, evaluarRiesgoPlanilla, evaluarUnaLinea, DetalleRiesgo } from '../api/prediccionesApi';
 import { riesgoMeta } from '../styles/riesgoMeta';
@@ -11,6 +12,51 @@ const CHIPS = [
   { key: 'ALTO', label: 'Alto' },
   { key: 'CRITICO', label: 'Crítico' },
 ];
+
+function datosDistribucion(detalles: DetalleRiesgo[]) {
+  const niveles = ['BAJO', 'MEDIO', 'ALTO', 'CRITICO'];
+  return niveles.map((nivel) => ({
+    nivel,
+    cantidad: detalles.filter((d) => d.nivelRiesgo === nivel).length,
+  }));
+}
+
+function datosWaterfall(shapValues: Record<string, number>, baseValue: number) {
+  const entradas = Object.entries(shapValues).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  let acumulado = baseValue;
+  const pasos = entradas.map(([feature, valor]) => {
+    const inicio = acumulado;
+    acumulado += valor;
+    return {
+      feature,
+      base: Math.min(inicio, acumulado),
+      delta: Math.abs(valor),
+      esPositivo: valor > 0,
+      esBase: false,
+    };
+  });
+  return [
+    { feature: 'Valor base', base: 0, delta: baseValue, esPositivo: true, esBase: true },
+    ...pasos,
+    { feature: 'Score final', base: 0, delta: acumulado, esPositivo: true, esBase: true },
+  ];
+}
+
+function exportarCSV(detalles: DetalleRiesgo[], planillaId: number): void {
+  const encabezados = ['Codigo', 'Descripcion', 'Cantidad', 'Valor Solicitado', 'Valor Oficial', 'Nivel Riesgo', 'Puntaje', 'Corregido'];
+  const filas = detalles.map((d) => [
+    d.codigo, d.descripcion ?? '', d.cantidad, d.valorSolicitado,
+    d.valorOficial ?? '', d.nivelRiesgo ?? '', d.puntaje ?? '', d.corregido ? 'SI' : 'NO',
+  ]);
+  const csv = [encabezados, ...filas].map((fila) => fila.map((v) => `"${v}"`).join(',')).join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `resultados_riesgo_planilla_${planillaId}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 function RevisarRiesgoPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
@@ -102,13 +148,18 @@ function RevisarRiesgoPage(): JSX.Element {
                 ✓ Evaluado con IA
               </button>
               <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--text-faint)' }}>Modelo RandomForest · SHAP</div>
-              <button
-                className="btn-primary"
-                onClick={() => navigate(`/documento?planillaId=${planillaId}&tipo=consolidada`)}
-                style={{ marginTop: 10, padding: '10px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, display: 'block' }}
-              >
-                Generar planilla consolidada →
-              </button>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
+                <button onClick={() => exportarCSV(detalles, planillaId)} className="btn-secondary" style={{ padding: '10px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600 }}>
+                  Exportar CSV
+                </button>
+                <button
+                  className="btn-primary"
+                  onClick={() => navigate(`/documento?planillaId=${planillaId}&tipo=consolidada`)}
+                  style={{ padding: '10px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600 }}
+                >
+                  Generar planilla consolidada →
+                </button>
+              </div>
             </>
           ) : (
             <button
@@ -130,6 +181,21 @@ function RevisarRiesgoPage(): JSX.Element {
         <Stat label="Corregidas automáticamente" valor={corregidas} colorVar="--risk-critico" />
         <Stat label="Requieren revisión manual" valor={manual} colorVar="--risk-alto" />
       </div>
+
+      {yaEvaluado && detalles.length > 0 && (
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, marginBottom: 24 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Distribución de riesgo</div>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={datosDistribucion(detalles)}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="nivel" fontSize={12} />
+              <YAxis fontSize={12} allowDecimals={false} />
+              <Tooltip />
+              <Bar dataKey="cantidad" fill="var(--brand)" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
         {CHIPS.map((c) => (
@@ -203,24 +269,40 @@ function RevisarRiesgoPage(): JSX.Element {
                       Contribución al score (SHAP)
                     </div>
                     {d.shapValues ? (
-                      Object.entries(d.shapValues)
-                        .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
-                        .map(([feature, valor]) => (
-                          <div key={feature} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                            <div style={{ width: 200, fontSize: 12, color: 'var(--text-muted)' }}>{feature}</div>
-                            <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
-                              <div
-                                style={{
-                                  width: `${Math.min(100, Math.abs(valor) * 100)}%`, height: '100%',
-                                  background: valor > 0 ? 'var(--risk-critico)' : 'var(--risk-bajo)',
-                                }}
-                              />
+                      d.baseValue !== null ? (
+                        <ResponsiveContainer width="100%" height={220}>
+                          <BarChart data={datosWaterfall(d.shapValues, d.baseValue)} layout="vertical" margin={{ left: 20 }}>
+                            <XAxis type="number" domain={[0, 1]} fontSize={11} />
+                            <YAxis type="category" dataKey="feature" width={140} fontSize={11} />
+                            <Tooltip formatter={(value: number) => value.toFixed(3)} />
+                            <Bar dataKey="base" stackId="w" fill="transparent" />
+                            <Bar dataKey="delta" stackId="w" radius={[3, 3, 3, 3]}>
+                              {datosWaterfall(d.shapValues, d.baseValue).map((entry, i) => (
+                                <Cell key={i} fill={entry.esBase ? 'var(--brand)' : entry.esPositivo ? 'var(--risk-critico)' : 'var(--risk-bajo)'} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        Object.entries(d.shapValues)
+                          .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+                          .map(([feature, valor]) => (
+                            <div key={feature} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                              <div style={{ width: 200, fontSize: 12, color: 'var(--text-muted)' }}>{feature}</div>
+                              <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+                                <div
+                                  style={{
+                                    width: `${Math.min(100, Math.abs(valor) * 100)}%`, height: '100%',
+                                    background: valor > 0 ? 'var(--risk-critico)' : 'var(--risk-bajo)',
+                                  }}
+                                />
+                              </div>
+                              <div style={{ width: 50, fontSize: 12, fontFamily: 'var(--mono)', textAlign: 'right' }}>
+                                {valor.toFixed(2)}
+                              </div>
                             </div>
-                            <div style={{ width: 50, fontSize: 12, fontFamily: 'var(--mono)', textAlign: 'right' }}>
-                              {valor.toFixed(2)}
-                            </div>
-                          </div>
-                        ))
+                          ))
+                      )
                     ) : (
                       <p style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>
                         Sin evaluación de IA todavía — completa el valor oficial en Auditoría y evalúa esta línea.
@@ -237,6 +319,7 @@ function RevisarRiesgoPage(): JSX.Element {
                         Score de riesgo: <span style={{ fontFamily: 'var(--mono)', color: 'var(--text)' }}>{d.puntaje?.toFixed(1)}%</span>
                       </div>
                     )}
+
                     {d.motivosSugeridos && d.motivosSugeridos.length > 0 && (
                       <div style={{ marginTop: 14, padding: 12, background: 'var(--brand-light)', borderRadius: 8 }}>
                         <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--brand-dark)', textTransform: 'uppercase', marginBottom: 6 }}>
@@ -252,6 +335,22 @@ function RevisarRiesgoPage(): JSX.Element {
                         </div>
                       </div>
                     )}
+
+                    {d.tasaRechazoHistorica?.disponible && (
+                      <div style={{ marginTop: 14, padding: 12, background: 'var(--surface-alt)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 6 }}>
+                          Historial real de este código (referencial, no automático)
+                        </div>
+                        <div style={{ fontSize: 12.5 }}>
+                          Este código fue rechazado por pertinencia médica/documentación en el{' '}
+                          <strong>{(d.tasaRechazoHistorica.tasaRechazo! * 100).toFixed(0)}%</strong> de {d.tasaRechazoHistorica.totalApariciones} casos reales conocidos.
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4, fontStyle: 'italic' }}>
+                          Estadística histórica del código, no una predicción — no reemplaza el criterio del auditor.
+                        </div>
+                      </div>
+                    )}
+
                     <a
                       href="#"
                       onClick={(e) => {
@@ -268,10 +367,11 @@ function RevisarRiesgoPage(): JSX.Element {
                     <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                       {necesitaRevision && (
                         <button
-                      onClick={() => {
-                        const motivoId = d.motivosSugeridos?.[0]?.id;
-                        navigate(`/auditoria?detalleId=${d.detalleId}${motivoId ? `&motivoSugeridoId=${motivoId}` : ''}`);
-                      }}                          className="btn-primary"
+                          onClick={() => {
+                            const motivoId = d.motivosSugeridos?.[0]?.id;
+                            navigate(`/auditoria?detalleId=${d.detalleId}${motivoId ? `&motivoSugeridoId=${motivoId}` : ''}`);
+                          }}
+                          className="btn-primary"
                           style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600 }}
                         >
                           Revisar / Corregir →

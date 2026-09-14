@@ -20,6 +20,8 @@ export enum AuditAction {
   DOWNLOAD = 'DOWNLOAD',
   AUDITAR = 'AUDITAR',
   FACTURAR = 'FACTURAR',
+  DERECHO_OLVIDO = 'DERECHO_OLVIDO',
+
 }
 
 export enum EstadoFila {

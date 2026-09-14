@@ -10,6 +10,7 @@ import {
   UseGuards,
   Req,
   ParseIntPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -32,10 +33,12 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../../common/enums';
-import { Patch, Delete, HttpCode, HttpStatus,  Res, NotFoundException } from '@nestjs/common';
+import { Patch, Delete, HttpCode, HttpStatus, Res, NotFoundException } from '@nestjs/common';
 import { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { User } from '../users/entities/user.entity';
 
 interface RequestConUsuario extends Request {
   user: { id: number };
@@ -54,11 +57,11 @@ export class PlanillasController {
     private readonly resultadosRepository: Repository<ResultadoPlanilla>,
     @InjectRepository(Planilla)
     private readonly planillasRepository: Repository<Planilla>,
-    @InjectRepository(Tramite) 
+    @InjectRepository(Tramite)
     private readonly tramitesRepository: Repository<Tramite>,
 
-  ) {}
-@Post('subir')
+  ) { }
+  @Post('subir')
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -157,7 +160,7 @@ export class PlanillasController {
       order: { createdAt: 'DESC' },
     });
   }
-    @Get('resultados/:id/descargar')
+  @Get('resultados/:id/descargar')
   @ApiOperation({ summary: 'Descarga el archivo generado (individual/consolidada, xlsx o pdf)' })
   async descargarResultado(
     @Param('id', ParseIntPipe) resultadoId: number,
@@ -172,15 +175,15 @@ export class PlanillasController {
     if (!fs.existsSync(rutaAbsoluta)) {
       throw new NotFoundException(
         `El archivo ya no existe en el sistema de archivos (${resultado.rutaArchivo}). ` +
-          'Puede que se haya movido/borrado la carpeta uploads/, o que el backend se esté ' +
-          'ejecutando desde un directorio distinto al que se usó para generarlo.',
+        'Puede que se haya movido/borrado la carpeta uploads/, o que el backend se esté ' +
+        'ejecutando desde un directorio distinto al que se usó para generarlo.',
       );
     }
 
     res.download(rutaAbsoluta, resultado.nombreArchivo);
   }
 
-    @Get(':id/servicios')
+  @Get(':id/servicios')
   @ApiOperation({ summary: 'Lista los servicios distintos (tipo_servicio) presentes en esta planilla' })
   async servicios(@Param('id', ParseIntPipe) planillaId: number): Promise<string[]> {
     const filas = await this.tramitesRepository
@@ -254,6 +257,45 @@ export class PlanillasController {
       throw new NotFoundException(`Planilla ${id} no encontrada`);
     }
   }
+  @Get(':id/preview')
+  @ApiOperation({ summary: 'Vista previa paginada de las filas ya procesadas de una planilla' })
+  async preview(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.planillasService.obtenerVistaPrevia(id, page ? Number(page) : 1, limit ? Number(limit) : 50);
+  }
+  @Get(':id/descargar-individuales-zip')
+  @ApiOperation({ summary: 'Descarga todas las individuales ya generadas como ZIP' })
+  async descargarIndividualesZip(
+    @Param('id', ParseIntPipe) planillaId: number,
+    @Res() res: Response,
+    @Query('servicio') servicio?: string,
+  ) {
+    await this.generadorIndividuales.descargarTodasComoZip(planillaId, res, servicio);
+  }
+  @Delete(':id/derecho-olvido')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Ejercicio explícito del derecho al olvido LOPDP (requiere motivo)' })
+  async derechoAlOlvido(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('motivo') motivo: string,
+    @CurrentUser() user: Omit<User, 'passwordHash'>,
+    @Req() request: Request,
+  ) {
+    if (!motivo) {
+      throw new BadRequestException('El ejercicio del derecho al olvido requiere un motivo explícito.');
+    }
+    await this.planillasService.ejercerDerechoAlOlvido(id, motivo, {
+      usuarioId: user.id,
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+    });
+    return { ok: true };
+  }
+
 
 }
 

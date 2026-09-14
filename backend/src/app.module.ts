@@ -7,7 +7,7 @@ import { UsersModule } from './modules/users/users.module';
 import { PlanillasModule } from './modules/planillas/planillas.module';
 import { AuditoriaModule } from './modules/auditoria/auditoria.module';
 import { Plantilla } from './modules/planillas/entities/plantilla.entity';
-
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ResultadoPlanilla } from './modules/planillas/entities/resultado-planilla.entity';
 import { User } from './modules/users/entities/user.entity';
 import { UserSession } from './modules/auth/entities/user-session.entity';
@@ -21,9 +21,15 @@ import { DecisionAuditoriaEntity } from './modules/auditoria/entities/decision-a
 import { Factura } from './modules/facturas/entities/factura.entity';
 import { PrediccionRiesgo } from './modules/predicciones/entities/prediccion-riesgo.entity';
 import { AuditLog } from './modules/audit-log/entities/audit-log.entity';
+import { AuditLogModule } from './modules/audit-log/audit-log.module';
 import { PrediccionesModule } from './modules/predicciones/predicciones.module';
 import { CorreccionAutomatica } from './modules/predicciones/entities/correccion-automatica.entity';
 import { MotivoObjecion } from './modules/motivos-objecion/entities/motivo-objecion.entity';
+
+// FIX: CatalogosModule y DashboardModule NO son entidades de TypeORM --
+// estaban metidos aquí por error y por eso sus rutas nunca se registraban.
+// Se sacaron de este arreglo y se movieron a imports: [] del @Module(),
+// donde corresponden.
 const ALL_ENTITIES = [
   User,
   UserSession,
@@ -40,8 +46,7 @@ const ALL_ENTITIES = [
   ResultadoPlanilla,
   AuditLog,
   CorreccionAutomatica,
-  MotivoObjecion, 
-  CatalogosModule,
+  MotivoObjecion,
 ];
 
 // Health check mínimo para verificar que la app y la conexión a la BD
@@ -77,6 +82,9 @@ class HealthController {
     PlanillasModule,
     AuditoriaModule,
     PrediccionesModule,
+    CatalogosModule,   // <-- FIX: movido aquí, donde corresponde
+    DashboardModule,   // <-- FIX: movido aquí, donde corresponde
+    AuditLogModule,    // <-- FIX: faltaba por completo
   ],
   controllers: [HealthController],
 })

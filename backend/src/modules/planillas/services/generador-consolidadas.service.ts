@@ -1,4 +1,4 @@
-import { BadRequestException,Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
@@ -80,10 +80,10 @@ export class GeneradorConsolidadasService {
     _ctx: ContextoRequest,
   ): Promise<ResultadoGeneracion> {
     const planilla = await this.planillasRepository.findOneOrFail({ where: { id: planillaId } });
-        if (!planilla.revisadoNombre || !planilla.aprobadoNombre) {
+    if (!planilla.revisadoNombre || !planilla.aprobadoNombre) {
       throw new BadRequestException(
         'Esta planilla no tiene las firmas completas (revisor y/o aprobador). ' +
-        'Complétalas en "Editar" antes de generar los documentos finales.',
+          'Complétalas en "Editar" antes de generar los documentos finales.',
       );
     }
     const grupos = await this.agruparPorServicioYBeneficiario(planillaId, dto);
@@ -105,9 +105,7 @@ export class GeneradorConsolidadasService {
         const registros = await this.generarUnGrupo(planillaId, planilla, grupo, rutaPlantilla);
         generados.push(...registros);
       } catch (error) {
-        this.logger.error(
-          `Error generando consolidada servicio=${grupo.servicio}: ${(error as Error).message}`,
-        );
+        this.logger.error(`Error generando consolidada servicio=${grupo.servicio}: ${(error as Error).message}`);
         errores.push({ servicio: grupo.servicio, error: (error as Error).message });
       }
     }
@@ -115,20 +113,9 @@ export class GeneradorConsolidadasService {
     return { generados, errores, advertencias };
   }
 
-
   private limpiarZonasBasura(hoja: ExcelJS.Worksheet): void {
     const COLUMNAS = ['A', 'B', 'C', 'D', 'E'];
-
-    // Filas de basura conocida (residuo de corridas anteriores de la macro)
     const filasBasura = [48, 49, 50, 51, 52, 53, 54, 55, 59, 60, 61, 62, 63, 64];
-
-    // Bloque real de datos (16-45): se limpia COMPLETO, no solo las filas
-    // basura, porque la columna A tiene una fórmula de auto-incremento
-    // compartida en la plantilla original ("=A(fila-1)+1", la vimos en tu
-    // VBA). Si solo se sobreescriben ALGUNAS filas del bloque y se dejan
-    // otras con la fórmula intacta, exceljs truena al guardar con
-    // "Shared Formula master must exist...". Limpiando el bloque completo
-    // antes de escribir se elimina cualquier resto de fórmula compartida.
     const filasBloqueDatos = Array.from(
       { length: FILA_FIN_DATOS - FILA_INICIO_DATOS + 1 },
       (_, i) => FILA_INICIO_DATOS + i,
@@ -141,6 +128,18 @@ export class GeneradorConsolidadasService {
     }
   }
 
+  /**
+   * FIX: antes sumaba detalle.valorSolicitado directo -- ese campo YA
+   * refleja la correccion automatica cuando existe (corregirAutomaticamente()
+   * en predicciones.service.ts actualiza subtotal/valorSolicitado/
+   * valorUnitarioSolicitado en la MISMA fila de detalles_servicios).
+   * El bug real no estaba en usar el campo equivocado, sino en que
+   * corregirAutomaticamente() no actualizaba valorUnitarioSolicitado
+   * (ya corregido en predicciones.service.ts). Aqui NO hace falta
+   * cambiar la query -- valorSolicitado siempre fue el campo correcto
+   * a sumar, y ya viene corregido desde el origen. Se deja el comentario
+   * para dejar constancia de que se revisó explícitamente.
+   */
   private async agruparPorServicioYBeneficiario(
     planillaId: number,
     dto: GenerarConsolidadasDto,
@@ -177,6 +176,9 @@ export class GeneradorConsolidadasService {
           montoTotal: 0,
         });
       }
+      // valorSolicitado ya viene corregido si hubo correccion automatica
+      // (ver comentario del metodo) -- NO usar valorUnitarioSolicitado *
+      // cantidad aqui, porque eso ignoraria el porcentajeModificador.
       porBeneficiario.get(identificacion)!.montoTotal += Number(detalle.valorSolicitado);
     }
 
@@ -228,25 +230,21 @@ export class GeneradorConsolidadasService {
     hoja.getCell(CELDA_MONTO_SOLICITADO).value = totalGeneral;
     hoja.getCell(CELDA_TOTAL).value = totalGeneral;
 
-    hoja.getCell(REVISOR.nombre).value = planilla.revisadoNombre
-      ? `REVISADO: ${planilla.revisadoNombre}`
-      : '';
+    hoja.getCell(REVISOR.nombre).value = planilla.revisadoNombre ? `REVISADO: ${planilla.revisadoNombre}` : '';
     hoja.getCell(REVISOR.identificacion).value = planilla.revisadoIdentificacion ?? '';
     hoja.getCell(REVISOR.cargo).value = planilla.revisadoCargo;
-    hoja.getCell(APROBADOR.nombre).value = planilla.aprobadoNombre
-      ? `APROBADO: ${planilla.aprobadoNombre}`
-      : '';
+    hoja.getCell(APROBADOR.nombre).value = planilla.aprobadoNombre ? `APROBADO: ${planilla.aprobadoNombre}` : '';
     hoja.getCell(APROBADOR.identificacion).value = planilla.aprobadoIdentificacion ?? '';
     hoja.getCell(APROBADOR.cargo).value = planilla.aprobadoCargo;
+
+    // Resetea seleccion grabada (misma correccion que en individuales).
+    hoja.views = [{ state: 'normal', xSplit: 0, ySplit: 0, topLeftCell: 'A1', activeCell: 'A1' }];
 
     const nombreXlsx = `${nombreBase}.xlsx`;
     const rutaXlsxAbsoluta = await this.excelService.guardar(workbook, nombreXlsx, carpetaDestino);
     const rutaXlsxRelativa = path.relative(process.cwd(), rutaXlsxAbsoluta);
 
-    const rutaPdfAbsoluta = await this.libreOfficeService.convertirXlsxAPdf(
-      rutaXlsxAbsoluta,
-      carpetaDestino,
-    );
+    const rutaPdfAbsoluta = await this.libreOfficeService.convertirXlsxAPdf(rutaXlsxAbsoluta, carpetaDestino);
     const nombrePdf = path.basename(rutaPdfAbsoluta);
     const rutaPdfRelativa = path.relative(process.cwd(), rutaPdfAbsoluta);
 

@@ -128,7 +128,7 @@ function AuditoriaPage(): JSX.Element {
                     </span>
                   </div>
                   <div style={{ marginTop: 4, color: 'var(--text-muted)' }}>
-                    {item.expediente.nombrePaciente} · Trámite {item.expediente.tramite.numeroTramite} · Planilla #{item.expediente.tramite.planilla.id} · Cant. {item.cantidad}
+                    {item.expediente?.nombrePaciente ?? '(sin expediente)'} · Trámite {item.expediente?.tramite?.numeroTramite ?? '—'} · Planilla #{item.expediente?.tramite?.planilla?.id ?? '—'} · Cant. {item.cantidad}
                   </div>
                   <div style={{ marginTop: 4, color: 'var(--text-muted)' }}>
                     Solicitado: <span style={{ fontFamily: 'var(--mono)' }}>${Number(item.valorSolicitado).toFixed(2)}</span> · Catálogo:{' '}
@@ -268,10 +268,10 @@ function ModalDecidir({
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
       <div style={{ background: 'var(--surface)', borderRadius: 12, padding: 28, width: 460, maxHeight: '85vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
         <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 4 }}>
-          {detalle.codigoOriginal} — {detalle.expediente.nombrePaciente}
+          {detalle.codigoOriginal} — {detalle.expediente?.nombrePaciente ?? '(sin expediente)'}
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 18 }}>
-          Trámite {detalle.expediente.tramite.numeroTramite} · Planilla #{detalle.expediente.tramite.planilla.id}
+          Trámite {detalle.expediente?.tramite?.numeroTramite ?? '—'} · Planilla #{detalle.expediente?.tramite?.planilla?.id ?? '—'}
         </div>
 
         {!resultadoReeval ? (

@@ -55,7 +55,6 @@ export class PlantillasController {
   async subir(@Body() dto: CrearPlantillaDto, @UploadedFile() archivo: Express.Multer.File) {
     return this.plantillasService.subir(dto.nombre, dto.tipo, archivo);
   }
-
   @Delete(':id')
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)

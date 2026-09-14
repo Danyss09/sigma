@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { listarCorreccionesGlobales, CorreccionGlobal } from '../api/correccionesGlobalesApi';
 import BotonRegresar from '../components/BotonRegresar';
+import { listarCorreccionesGlobales, CorreccionGlobal } from '../api/correccionesGlobalesApi';
+
 function CorreccionesPage(): JSX.Element {
   const [items, setItems] = useState<CorreccionGlobal[]>([]);
   const [query, setQuery] = useState('');
@@ -13,18 +14,24 @@ function CorreccionesPage(): JSX.Element {
     const timeout = setTimeout(() => {
       setCargando(true);
       listarCorreccionesGlobales(query || undefined)
-        .then(setItems)
+        .then((data) => setItems(data ?? []))
+        .catch(() => setItems([]))
         .finally(() => setCargando(false));
     }, 300);
     return () => clearTimeout(timeout);
   }, [query]);
 
   const totalMonto = items.reduce((s, c) => s + (Number(c.valorAnterior) - Number(c.valorCorregido)), 0);
-  const planillasAfectadas = new Set(items.map((c) => c.detalleServicio.expediente.tramite.planilla.id)).size;
+  const planillasAfectadas = new Set(
+    items
+      .map((c) => c.detalleServicio?.expediente?.tramite?.planilla?.id)
+      .filter((id): id is number => id !== undefined && id !== null),
+  ).size;
 
   return (
     <div>
       <BotonRegresar to="/planillas" />
+
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 24, fontWeight: 600 }}>Correcciones automáticas</div>
         <div style={{ marginTop: 4, fontSize: 14, color: 'var(--text-muted)' }}>
@@ -58,7 +65,7 @@ function CorreccionesPage(): JSX.Element {
           items.map((c) => {
             const expandido = expandidoId === c.id;
             const diff = Number(c.valorCorregido) - Number(c.valorAnterior);
-            const planillaId = c.detalleServicio.expediente.tramite.planilla.id;
+            const planillaId = c.detalleServicio?.expediente?.tramite?.planilla?.id;
             return (
               <div key={c.id}>
                 <div
@@ -67,9 +74,9 @@ function CorreccionesPage(): JSX.Element {
                   style={{ display: 'grid', gridTemplateColumns: '0.8fr 0.7fr 0.6fr 1.6fr 0.9fr 0.9fr 0.9fr 0.7fr 0.3fr', padding: '13px 20px', borderBottom: '1px solid var(--border)', alignItems: 'center' }}
                 >
                   <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{new Date(c.createdAt).toLocaleDateString('es-EC')}</div>
-                  <div style={{ fontFamily: 'var(--mono)', fontSize: 12.5 }}>#{planillaId}</div>
-                  <div style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{c.detalleServicio.codigoOriginal}</div>
-                  <div style={{ fontSize: 13.5 }}>{c.detalleServicio.descripcion}</div>
+                  <div style={{ fontFamily: 'var(--mono)', fontSize: 12.5 }}>{planillaId !== undefined ? `#${planillaId}` : '—'}</div>
+                  <div style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{c.detalleServicio?.codigoOriginal ?? '—'}</div>
+                  <div style={{ fontSize: 13.5 }}>{c.detalleServicio?.descripcion ?? '(sin expediente asociado)'}</div>
                   <div style={{ fontFamily: 'var(--mono)', fontSize: 13, textDecoration: 'line-through', color: 'var(--text-faint)' }}>
                     ${Number(c.valorAnterior).toFixed(2)}
                   </div>
@@ -91,13 +98,15 @@ function CorreccionesPage(): JSX.Element {
                       Motivo de la corrección
                     </div>
                     <div style={{ fontSize: 13.5, lineHeight: 1.6, maxWidth: 760 }}>{c.motivo}</div>
-                    <a
-                      href="#"
-                      onClick={(e) => { e.preventDefault(); navigate(`/revisar-riesgo/${planillaId}`); }}
-                      style={{ display: 'inline-block', marginTop: 12, fontSize: 12.5, fontWeight: 600 }}
-                    >
-                      Ver planilla #{planillaId} →
-                    </a>
+                    {planillaId !== undefined && (
+                      <a
+                        href="#"
+                        onClick={(e) => { e.preventDefault(); navigate(`/revisar-riesgo/${planillaId}`); }}
+                        style={{ display: 'inline-block', marginTop: 12, fontSize: 12.5, fontWeight: 600 }}
+                      >
+                        Ver planilla #{planillaId} →
+                      </a>
+                    )}
                   </div>
                 )}
               </div>

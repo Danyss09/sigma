@@ -60,4 +60,5 @@ export class MinioService {
       throw new InternalServerErrorException('No se pudo eliminar el archivo del almacenamiento');
     }
   }
+  
 }

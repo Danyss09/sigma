@@ -1,5 +1,20 @@
 import { axiosClient } from './axiosClient';
 
+export interface MotivoSugerido {
+  id: number;
+  grupo: string;
+  codigo_original: string;
+  codigo_canonico: string;
+  descripcion: string | null;
+}
+
+export interface TasaRechazoHistorica {
+  disponible: boolean;
+  totalApariciones?: number;
+  rechazosTotales?: number;
+  tasaRechazo?: number;
+}
+
 export interface DetalleRiesgo {
   detalleId: number;
   codigo: string;
@@ -10,13 +25,15 @@ export interface DetalleRiesgo {
   nivelRiesgo: 'BAJO' | 'MEDIO' | 'ALTO' | 'CRITICO' | null;
   puntaje: number | null;
   shapValues: Record<string, number> | null;
+  baseValue: number | null;
   corregido: boolean;
   valorAnteriorCorreccion: number | null;
   motivoCorreccion: string | null;
   motivoNoEvaluado: string | null;
+  motivosSugeridos: MotivoSugerido[];
+  tasaRechazoHistorica?: TasaRechazoHistorica;
   tramite: string;
   servicio: string;
-  motivosSugeridos: { id: number; grupo: string; codigo_original: string; descripcion: string | null }[];
 }
 
 export async function obtenerVistaRiesgo(planillaId: number): Promise<DetalleRiesgo[]> {

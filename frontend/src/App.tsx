@@ -14,6 +14,8 @@ import { useAuthStore } from './store/authStore';
 import UsuariosPage from './pages/UsuariosPage';
 import CatalogosPage from './pages/CatalogosPage';
 import ConfiguracionPage from './pages/ConfiguracionPage';
+import DashboardPage from './pages/DashboardPage';
+
 function PrivateRoute({ children }: { children: JSX.Element }): JSX.Element {
   const accessToken = useAuthStore((state) => state.accessToken);
   return accessToken ? children : <Navigate to="/login" replace />;
@@ -46,7 +48,8 @@ function App(): JSX.Element {
           <Route path="/configuracion" element={<ConfiguracionPage />} />
           <Route path="/configuracion/firmas" element={<ConfiguracionPage />} />
           <Route path="/configuracion/catalogos-detalle" element={<CatalogosPage />} />
-
+          <Route path="/" element={<DashboardPage />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
         </Route>
 
         <Route path="/" element={<Navigate to="/planillas" replace />} />
