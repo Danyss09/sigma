@@ -1,0 +1,6 @@
+# Archivos que se ejecutan en Linux (Docker / servidor): siempre LF,
+# aunque el repositorio se clone en Windows.
+Dockerfile*  text eol=lf
+*.Dockerfile text eol=lf
+Caddyfile    text eol=lf
+*.sh         text eol=lf

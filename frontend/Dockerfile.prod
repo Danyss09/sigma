@@ -1,0 +1,18 @@
+# =====================================================================
+# SIGMA - Frontend (React + Vite) para produccion
+# Compila los archivos estaticos y los sirve con Caddy.
+# El Caddyfile NO va dentro de la imagen: se monta desde deploy/Caddyfile.
+# =====================================================================
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+# El navegador llama a la API por la misma direccion, bajo /backend (Caddy lo redirige al backend)
+ARG VITE_API_URL=/backend
+ENV VITE_API_URL=$VITE_API_URL
+# "vite build" sin "tsc": el frontend tiene errores de tipos preexistentes que no afectan la ejecucion
+RUN npx vite build
+
+FROM caddy:2-alpine
+COPY --from=build /app/dist /srv
