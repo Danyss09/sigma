@@ -40,10 +40,11 @@ services:
     logging: *logging
 
   # ---------- Almacenamiento de archivos (compatible con S3) ----------
-  # Ojo: MinIO Community ya no publica imagenes nuevas. Se fija la ultima version disponible
-  # (ver MINIO_IMAGE / MC_IMAGE en el archivo de entorno). Solo es accesible desde la red interna.
+  # Ojo: MinIO Community ya no publica imagenes nuevas y quay.io le cerro el acceso anonimo.
+  # Se usa el mirror de Chainguard (mismos binarios), fijado por huella digital en MINIO_IMAGE.
+  # Solo es accesible desde la red interna. El bucket lo crea el backend solo al arrancar.
   minio:
-    image: ${MINIO_IMAGE:-quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z}
+    image: ${MINIO_IMAGE:-cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1}
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -51,28 +52,6 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Define MINIO_ROOT_PASSWORD (minimo 8 caracteres)}
     volumes:
       - minio_data:/data
-    networks: [interna]
-    logging: *logging
-
-  # Crea el bucket (privado y con versionado) y termina.
-  minio-init:
-    image: ${MC_IMAGE:-quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z}
-    restart: "no"
-    depends_on: [minio]
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      MINIO_BUCKET: ${MINIO_BUCKET:-sigma-planillas}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
-          echo "Esperando a MinIO..."; sleep 2
-        done
-        mc mb --ignore-existing "local/$$MINIO_BUCKET"
-        mc version enable "local/$$MINIO_BUCKET"
-        mc anonymous set none "local/$$MINIO_BUCKET"
-        echo "Bucket $$MINIO_BUCKET listo (privado, con versionado)."
     networks: [interna]
     logging: *logging
 
@@ -86,8 +65,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      minio:
+        condition: service_started
     environment:
       NODE_ENV: production
       PORT: "3000"
