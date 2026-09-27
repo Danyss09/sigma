@@ -37,3 +37,8 @@ frontend/.vite/
 
 # ---- Compilados de NestJS ----
 backend/dist/
+
+# ---- Despliegue: secretos y claves (NUNCA subir) ----
+.env.production
+clave-privada*.txt
+*.age

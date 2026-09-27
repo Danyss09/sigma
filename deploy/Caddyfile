@@ -1,0 +1,45 @@
+# =====================================================================
+# SIGMA - Caddy: HTTPS automatico (Let's Encrypt), interfaz web y proxy a la API
+# DOMAIN y ACME_EMAIL vienen del archivo de entorno.
+# Con DOMAIN=localhost Caddy usa un certificado local (el navegador avisa: es normal en pruebas).
+# =====================================================================
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# API de SIGMA. El prefijo /backend se quita antes de enviar la peticion al backend.
+	handle_path /backend/* {
+		# La documentacion interactiva (Swagger) no se expone al publico
+		@swagger path /api /api/* /api-json /api-yaml
+		respond @swagger 404
+
+		request_body {
+			max_size 50MB
+		}
+		reverse_proxy nest-api:3000
+	}
+
+	# Interfaz web (React). Cualquier ruta desconocida vuelve a index.html (SPA).
+	handle {
+		root * /srv
+
+		@estaticos path /assets/*
+		header @estaticos Cache-Control "public, max-age=31536000, immutable"
+		header /index.html Cache-Control "no-cache"
+
+		try_files {path} /index.html
+		file_server
+	}
+}

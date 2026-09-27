@@ -1,0 +1,184 @@
+# =====================================================================
+# SIGMA - Produccion (servidor)
+#
+# Solo el contenedor "web" (Caddy) publica puertos: 80 y 443.
+# Postgres, MinIO, backend y ML viven en la red interna de Docker y NO son
+# accesibles desde internet.
+#
+# En el servidor (con COMPOSE_FILE definido en .env):   docker compose up -d
+# En tu PC, para probar:
+#   docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+# =====================================================================
+name: sigma
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # ---------- Base de datos ----------
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sigma_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en el archivo de entorno}
+      POSTGRES_DB: ${POSTGRES_DB:-sigma_db}
+    # Ajustes moderados para una maquina de 4 GiB compartida con el resto de servicios
+    command: ["postgres", "-c", "shared_buffers=128MB", "-c", "max_connections=50", "-c", "work_mem=4MB"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [interna]
+    logging: *logging
+
+  # ---------- Almacenamiento de archivos (compatible con S3) ----------
+  # Ojo: MinIO Community ya no publica imagenes nuevas y quay.io le cerro el acceso anonimo.
+  # Se usa el mirror de Chainguard (mismos binarios), fijado por huella digital en MINIO_IMAGE.
+  # Solo es accesible desde la red interna. El bucket lo crea el backend solo al arrancar.
+  minio:
+    image: ${MINIO_IMAGE:-cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1}
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Define MINIO_ROOT_USER en el archivo de entorno}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Define MINIO_ROOT_PASSWORD (minimo 8 caracteres)}
+    volumes:
+      - minio_data:/data
+    networks: [interna]
+    logging: *logging
+
+  # ---------- API (NestJS) ----------
+  nest-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: ${REGISTRY:-sigma}/sigma-backend:${TAG:-local}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-sigma_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-sigma_db}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: "9000"
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET:-sigma-planillas}
+      JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET en el archivo de entorno}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Define JWT_REFRESH_SECRET en el archivo de entorno}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-15m}
+      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-7d}
+      FASTAPI_URL: http://fastapi-ml:8000
+      TRUST_PROXY: "1"
+      FRONTEND_URL: https://${DOMAIN:?Define DOMAIN en el archivo de entorno}
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_plantillas:/app/plantillas
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    networks: [interna]
+    logging: *logging
+
+  # ---------- Microservicio de Machine Learning (FastAPI) ----------
+  fastapi-ml:
+    build:
+      context: ./ml
+      dockerfile: Dockerfile
+    image: ${REGISTRY:-sigma}/sigma-ml:${TAG:-local}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SIGMA_DB_DSN: host=postgres dbname=${POSTGRES_DB:-sigma_db} user=${POSTGRES_USER:-sigma_user} password=${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    networks: [interna]
+    logging: *logging
+
+  # ---------- Web: interfaz React + proxy inverso con HTTPS automatico (Caddy) ----------
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_URL: /backend
+    image: ${REGISTRY:-sigma}/sigma-web:${TAG:-local}
+    restart: unless-stopped
+    depends_on:
+      nest-api:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN:?Define DOMAIN en el archivo de entorno}
+      ACME_EMAIL: ${ACME_EMAIL:?Define ACME_EMAIL en el archivo de entorno}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [interna]
+    logging: *logging
+
+  # ---------- Tarea unica: aplicar migraciones y seeds ----------
+  #   docker compose --profile setup run --rm db-migrate
+  db-migrate:
+    image: postgres:15
+    profiles: ["setup"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-sigma_user}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-sigma_db}
+      PGCLIENTENCODING: UTF8
+    volumes:
+      - ./backend/sql:/sql:ro
+      - ./deploy/aplicar-migraciones.sh:/aplicar-migraciones.sh:ro
+    entrypoint: ["bash", "/aplicar-migraciones.sh"]
+    networks: [interna]
+
+networks:
+  interna:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  minio_data:
+  backend_uploads:
+  backend_plantillas:
+  caddy_data:
+  caddy_config:

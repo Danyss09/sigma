@@ -1,0 +1,14 @@
+node_modules
+dist
+uploads
+.env
+.env.*
+*.log
+# Migraciones y seeds (pesan decenas de MB): se aplican con el servicio db-migrate, no van en la imagen
+sql
+*.sql
+parche
+README*
+docker-compose*
+Dockerfile
+.dockerignore
